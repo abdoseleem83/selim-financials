@@ -49,7 +49,8 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 </script>
 
-<script type="text/babel" data-presets="react">
+<script id="app-source" type="text/plain">
+
 const { useState, useMemo, useRef, useEffect } = React;
 
 function makeIcon(glyph) {
@@ -1294,6 +1295,12 @@ function Root() {
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(<Root />);
+
+</script>
+<script>
+  var __src = document.getElementById("app-source").textContent;
+  var __out = Babel.transform(__src, { presets: [["react", { runtime: "classic" }]] }).code;
+  (0, eval)(__out);
 </script>
 </body>
 </html>
