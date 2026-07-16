@@ -1199,6 +1199,25 @@ function HomeDashboard({ company, periods, year, setYear, availableYears, zakatD
 
 function round2(n) { return Math.round(n * 100) / 100; }
 
+function computeZakatTotal(zakatData) {
+  if (!zakatData || !zakatData.rows || !zakatData.items) return 0;
+  const f = computeFigures(zakatData.rows);
+  const assetItems = zakatData.items.filter((i) => i.group === "asset");
+  const liabilityItems = zakatData.items.filter((i) => i.group === "liability");
+  const zakatBase = assetItems.reduce((s, i) => s + i.amount, 0) - liabilityItems.reduce((s, i) => s + i.amount, 0);
+  const days = zakatData.hawlStart && zakatData.hawlEnd ? Math.round((new Date(zakatData.hawlEnd) - new Date(zakatData.hawlStart)) / 86400000) : 354;
+  const proration = Math.min(days / 354, 1) || 1;
+  const rate = zakatData.rate ?? 2.5;
+  const nisab = zakatData.nisab ?? 0;
+  const partnersRaw = f.equityAccountRows.filter((r) => r.amount > 0);
+  const totalEquity = partnersRaw.reduce((s, p) => s + p.amount, 0);
+  return partnersRaw.reduce((s, p) => {
+    const share = zakatBase * (totalEquity ? p.amount / totalEquity : 0);
+    const meets = nisab > 0 ? share >= nisab : share > 0;
+    return s + (meets ? share * (rate / 100) * proration : 0);
+  }, 0);
+}
+
 function ZakatModule({ data, setData, readOnly }) {
   const [file, setFile] = useState(null);
   const [parsed, setParsed] = useState(null);
@@ -1219,28 +1238,71 @@ function ZakatModule({ data, setData, readOnly }) {
   };
 
   useEffect(() => {
-    if (f && !data.adjustments) {
+    if (f && !data.items) {
+      const otherDebtors = round2(Math.max(f.currentAssets - f.cash - f.customerDebt - f.supplierPrepaid - f.closingInventory, 0));
+      const taxLiab = round2(f.liabilityCurrentRows.filter((r) => /ضريبة/.test(r.name)).reduce((s, r) => s + r.amount, 0));
       setData({
-        adjustments: [
-          { id: uid(), label: "صافي حقوق الملكية (رأس المال + الاحتياطيات + الأرباح المرحلة)", sign: 1, amount: round2(f.equityAccounts) },
-          { id: uid(), label: "المخصصات غير القابلة للخصم", sign: 1, amount: 0 },
-          { id: uid(), label: "قروض وتمويلات طويلة الأجل ممولة لأصول ثابتة", sign: 1, amount: 0 },
-          { id: uid(), label: "صافي الأصول الثابتة (بعد الإهلاك)", sign: -1, amount: round2(f.nonCurrentAssets) },
-          { id: uid(), label: "استثمارات في شركات تابعة وزميلة (طويلة الأجل)", sign: -1, amount: 0 },
-          { id: uid(), label: "مصروفات تأسيس ومصروفات مؤجلة", sign: -1, amount: 0 },
-          { id: uid(), label: "خسائر متراكمة", sign: -1, amount: 0 },
+        items: [
+          { id: uid(), group: "asset", label: "النقدية والخزائن", amount: round2(f.cash) },
+          { id: uid(), group: "asset", label: "المدينون الآخرون والأمانات", amount: otherDebtors },
+          { id: uid(), group: "asset", label: "ذمم العملاء المدينة (المرجوة)", amount: round2(f.customerDebt) },
+          { id: uid(), group: "asset", label: "دفعات مقدمة للموردين", amount: round2(f.supplierPrepaid) },
+          { id: uid(), group: "asset", label: "المخزون التجاري (بسعر السوق)", amount: round2(f.closingInventory) },
+          { id: uid(), group: "liability", label: "موردون (أرصدة دائنة)", amount: round2(f.supplierDebt) },
+          { id: uid(), group: "liability", label: "دفعات مقدمة من العملاء", amount: round2(f.customerPrepaid) },
+          { id: uid(), group: "liability", label: "ضرائب مستحقة", amount: taxLiab },
         ],
       });
     }
     // eslint-disable-next-line
   }, [f]);
 
-  const adjustments = data.adjustments;
-  const zakatBase = adjustments ? adjustments.reduce((s, a) => s + a.sign * a.amount, 0) : 0;
+  const items = data.items || [];
+  const assetItems = items.filter((i) => i.group === "asset");
+  const liabilityItems = items.filter((i) => i.group === "liability");
+  const totalAssets = assetItems.reduce((s, i) => s + i.amount, 0);
+  const totalLiab = liabilityItems.reduce((s, i) => s + i.amount, 0);
+  const zakatBase = totalAssets - totalLiab;
+
   const days = data.hawlStart && data.hawlEnd ? Math.round((new Date(data.hawlEnd) - new Date(data.hawlStart)) / 86400000) : 354;
   const proration = Math.min(days / 354, 1) || 1;
   const rate = data.rate ?? 2.5;
-  const zakatDue = Math.max(zakatBase, 0) * (rate / 100) * proration;
+  const nisab = data.nisab ?? 0;
+  const baseMeetsNisab = nisab > 0 ? zakatBase >= nisab : null;
+
+  const partnersRaw = f ? f.equityAccountRows.filter((r) => r.amount > 0) : [];
+  const totalEquity = partnersRaw.reduce((s, p) => s + p.amount, 0);
+  const partners = partnersRaw.map((p) => {
+    const pct = totalEquity ? p.amount / totalEquity : 0;
+    const share = zakatBase * pct;
+    const meets = nisab > 0 ? share >= nisab : share > 0;
+    const due = meets ? share * (rate / 100) * proration : 0;
+    return { name: p.name, pct, share, meets, due };
+  });
+  const totalDue = partners.reduce((s, p) => s + p.due, 0);
+
+  const updateItem = (id, patch) => setData({ items: items.map((i) => (i.id === id ? { ...i, ...patch } : i)) });
+  const removeItem = (id) => setData({ items: items.filter((i) => i.id !== id) });
+  const addItem = (group) => setData({ items: [...items, { id: uid(), group, label: "بند إضافي", amount: 0 }] });
+
+  const ItemsGroup = ({ title, list, group }) => (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ fontWeight: 700, color: GOLD, marginBottom: 8, fontSize: 13.5 }}>{title}</div>
+      {list.map((it) => (
+        <div key={it.id} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+          <input value={it.label} disabled={readOnly} onChange={(e) => updateItem(it.id, { label: e.target.value })}
+            style={{ flex: 1, minWidth: 0, border: `1px solid ${RULE}`, borderRadius: 7, padding: "6px 10px", fontFamily: "'IBM Plex Sans Arabic', sans-serif", fontSize: 12.5, background: readOnly ? "#f3f0e8" : "#fff" }} />
+          <NumInput value={it.amount} disabled={readOnly} onChange={(e) => updateItem(it.id, { amount: parseFloat(e.target.value) || 0 })} style={{ width: 130 }} />
+          {!readOnly && <button onClick={() => removeItem(it.id)} style={{ background: "none", border: "none", cursor: "pointer", color: RED_INK, flexShrink: 0 }}><Trash2 size={14} /></button>}
+        </div>
+      ))}
+      {!readOnly && <GhostBtn icon={Plus} onClick={() => addItem(group)}>إضافة بند</GhostBtn>}
+      <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, borderTop: `2px solid ${INK}`, marginTop: 8, paddingTop: 6, fontSize: 13.5 }}>
+        <span>{`إجمالي ${title}`}</span>
+        <span style={{ direction: "ltr" }}>{fmt(list.reduce((s, i) => s + i.amount, 0))}</span>
+      </div>
+    </div>
+  );
 
   return (
     <div>
@@ -1261,52 +1323,76 @@ function ZakatModule({ data, setData, readOnly }) {
         <Card style={{ padding: 30, textAlign: "center", color: "#847c69" }}>لا توجد بيانات زكاة مرفوعة لهذه الشركة بعد، وصلاحيتك هنا مشاهدة فقط.</Card>
       )}
 
-      {rows && f && adjustments && (
-        <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 20, alignItems: "flex-start" }}>
-          <Card style={{ padding: 24 }}>
-            <div style={{ display: "flex", gap: 14, marginBottom: 18, flexWrap: "wrap" }}>
+      {rows && f && (
+        <div>
+          <Card style={{ padding: 18, marginBottom: 16 }}>
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
               <div>
-                <label style={{ fontSize: 12.5, color: "#6b6455" }}>بداية الحول</label>
-                <input type="date" value={data.hawlStart} disabled={readOnly} onChange={(e) => setData({ hawlStart: e.target.value })} style={{ display: "block", border: `1px solid ${RULE}`, borderRadius: 7, padding: "7px 10px", fontFamily: "inherit" }} />
+                <label style={{ fontSize: 12, color: "#6b6455" }}>بداية الحول</label>
+                <input type="date" value={data.hawlStart} disabled={readOnly} onChange={(e) => setData({ hawlStart: e.target.value })} style={{ display: "block", border: `1px solid ${RULE}`, borderRadius: 7, padding: "6px 9px", fontFamily: "inherit", fontSize: 13 }} />
               </div>
               <div>
-                <label style={{ fontSize: 12.5, color: "#6b6455" }}>نهاية الحول (تاريخ الميزان)</label>
-                <input type="date" value={data.hawlEnd} disabled={readOnly} onChange={(e) => setData({ hawlEnd: e.target.value })} style={{ display: "block", border: `1px solid ${RULE}`, borderRadius: 7, padding: "7px 10px", fontFamily: "inherit" }} />
+                <label style={{ fontSize: 12, color: "#6b6455" }}>نهاية الحول (تاريخ الميزان)</label>
+                <input type="date" value={data.hawlEnd} disabled={readOnly} onChange={(e) => setData({ hawlEnd: e.target.value })} style={{ display: "block", border: `1px solid ${RULE}`, borderRadius: 7, padding: "6px 9px", fontFamily: "inherit", fontSize: 13 }} />
               </div>
               <div>
-                <label style={{ fontSize: 12.5, color: "#6b6455" }}>نسبة الزكاة %</label>
-                <NumInput value={rate} disabled={readOnly} onChange={(e) => setData({ rate: parseFloat(e.target.value) || 0 })} style={{ width: 90 }} />
+                <label style={{ fontSize: 12, color: "#6b6455" }}>نسبة الزكاة %</label>
+                <NumInput value={rate} disabled={readOnly} onChange={(e) => setData({ rate: parseFloat(e.target.value) || 0 })} style={{ width: 80 }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 12, color: "#6b6455" }}>نصاب الزكاة (قيمة 85 جم ذهب 24)</label>
+                <NumInput value={nisab} disabled={readOnly} onChange={(e) => setData({ nisab: parseFloat(e.target.value) || 0 })} style={{ width: 140 }} />
               </div>
             </div>
-
-            <div style={{ fontWeight: 700, marginBottom: 8, color: INK }}>مكونات وعاء الزكاة</div>
-            {adjustments.map((a) => (
-              <div key={a.id} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-                <span style={{ width: 20, color: a.sign > 0 ? GREEN_INK : RED_INK, fontWeight: 700 }}>{a.sign > 0 ? "+" : "−"}</span>
-                <input value={a.label} disabled={readOnly} onChange={(e) => setData({ adjustments: adjustments.map((x) => x.id === a.id ? { ...x, label: e.target.value } : x) })}
-                  style={{ flex: 1, border: `1px solid ${RULE}`, borderRadius: 7, padding: "6px 10px", fontFamily: "'IBM Plex Sans Arabic', sans-serif", fontSize: 13, background: readOnly ? "#f3f0e8" : "#fff" }} />
-                <NumInput value={a.amount} disabled={readOnly} onChange={(e) => setData({ adjustments: adjustments.map((x) => x.id === a.id ? { ...x, amount: parseFloat(e.target.value) || 0 } : x) })} style={{ width: 140 }} />
-                {!readOnly && <button onClick={() => setData({ adjustments: adjustments.filter((x) => x.id !== a.id) })} style={{ background: "none", border: "none", cursor: "pointer", color: RED_INK }}><Trash2 size={15} /></button>}
-              </div>
-            ))}
-            {!readOnly && <GhostBtn icon={Plus} onClick={() => setData({ adjustments: [...adjustments, { id: uid(), label: "بند إضافي", sign: 1, amount: 0 }] })}>إضافة بند</GhostBtn>}
           </Card>
 
-          <Card style={{ padding: 24, background: INK, color: CREAM }}>
-            <div style={{ fontFamily: "'Markazi Text', serif", fontSize: 21, marginBottom: 14, textAlign: "center" }}>نتيجة حساب الزكاة</div>
-            <div style={{ display: "flex", justifyContent: "space-between", padding: "7px 0", fontWeight: 700, fontSize: 14.5 }}>
-              <span>وعاء الزكاة</span><span style={{ direction: "ltr" }}>{fmt(zakatBase)}</span>
+          <Card style={{ padding: 20, marginBottom: 16 }}>
+            <div style={{ fontWeight: 700, marginBottom: 4, color: INK, fontSize: 15 }}>أ ▎ الأصول الزكوية</div>
+            <ItemsGroup title="الأصول الزكوية" list={assetItems} group="asset" />
+            <div style={{ fontWeight: 700, marginBottom: 4, color: INK, fontSize: 15 }}>ب ▎ الخصوم واجبة الخصم</div>
+            <ItemsGroup title="الخصوم واجبة الخصم" list={liabilityItems} group="liability" />
+
+            <div style={{ background: "#f4efe2", borderRadius: 8, padding: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 14.5 }}>
+                <span>ج ▎ وعاء الزكاة الصافي</span>
+                <span style={{ direction: "ltr" }}>{fmt(zakatBase)}</span>
+              </div>
+              {nisab > 0 && (
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginTop: 6, color: baseMeetsNisab ? GREEN_INK : RED_INK }}>
+                  <span>هل بلغ الوعاء النصاب؟</span>
+                  <span>{baseMeetsNisab ? "✅ نعم" : "❌ لا"}</span>
+                </div>
+              )}
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", padding: "7px 0", fontSize: 13.5 }}>
-              <span>عدد أيام الحول</span><span style={{ direction: "ltr" }}>{days} يوم</span>
-            </div>
-            <div style={{ display: "flex", justifyContent: "space-between", padding: "7px 0", fontSize: 13.5, borderBottom: "1px solid rgba(255,255,255,0.2)" }}>
-              <span>نسبة التناسب</span><span style={{ direction: "ltr" }}>{(proration * 100).toFixed(1)}%</span>
-            </div>
-            <div style={{ marginTop: 16, padding: "16px 0", textAlign: "center", borderTop: "1px solid rgba(255,255,255,0.3)" }}>
-              <div style={{ fontSize: 12.5, opacity: 0.8 }}>الزكاة المستحقة</div>
-              <div style={{ fontFamily: "'Markazi Text', serif", fontSize: 34, color: GOLD, fontWeight: 700 }}>{fmt(zakatDue)}</div>
-            </div>
+          </Card>
+
+          {partners.length > 0 && (
+            <Card style={{ padding: 20, marginBottom: 16 }}>
+              <div style={{ fontWeight: 700, marginBottom: 4, color: INK, fontSize: 15 }}>د ▎ زكاة كل شريك منفردة</div>
+              <p style={{ fontSize: 11.5, color: "#847c69", marginBottom: 12 }}>النصاب يُقاس على حصة كل شريك من وعاء الزكاة على حدة (حسب نسبته في حسابات حقوق الملكية بميزان الزكاة)</p>
+              {partners.map((p, i) => (
+                <div key={i} style={{ borderBottom: i < partners.length - 1 ? `1px solid ${RULE}` : "none", padding: "8px 0" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                    <span>حصة {p.name} ({(p.pct * 100).toFixed(2)}%) من وعاء الزكاة</span>
+                    <span style={{ direction: "ltr" }}>{fmt(p.share)}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, color: p.meets ? GREEN_INK : "#8a8271", marginTop: 3 }}>
+                    <span>➤ زكاة {p.name} المستحقة ({rate}%)</span>
+                    <span style={{ direction: "ltr", fontWeight: 700 }}>{p.meets ? fmt(p.due) : (nisab > 0 ? "❌ لم يبلغ النصاب" : "—")}</span>
+                  </div>
+                </div>
+              ))}
+              <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, borderTop: `2px solid ${INK}`, marginTop: 10, paddingTop: 8, fontSize: 14 }}>
+                <span>◆ إجمالي الزكاة المستحقة (من بلغ النصاب فقط)</span>
+                <span style={{ direction: "ltr", color: GOLD }}>{fmt(totalDue)}</span>
+              </div>
+            </Card>
+          )}
+
+          <Card style={{ padding: 20, background: INK, color: CREAM, textAlign: "center" }}>
+            <div style={{ fontSize: 12.5, opacity: 0.8 }}>عدد أيام الحول: {days} يوم · نسبة التناسب {(proration * 100).toFixed(1)}%</div>
+            <div style={{ fontSize: 12.5, opacity: 0.8, marginTop: 4 }}>الزكاة المستحقة الإجمالية</div>
+            <div style={{ fontFamily: "'Markazi Text', serif", fontSize: 32, color: GOLD, fontWeight: 700 }}>{fmt(totalDue)}</div>
           </Card>
         </div>
       )}
@@ -1317,10 +1403,10 @@ function ZakatModule({ data, setData, readOnly }) {
 /* ---------------------------------- التطبيق الرئيسي ---------------------------------- */
 
 const STEPS = [
-  { key: "upload", label: "١. رفع فترة جديدة", icon: Upload },
-  { key: "classify", label: "٢. تصنيف الحسابات", icon: ClipboardList },
-  { key: "statements", label: "٣. القوائم المالية", icon: ScrollText },
-  { key: "zakat", label: "٤. الزكاة", icon: Landmark },
+  { key: "upload", label: "رفع فترة", icon: Upload },
+  { key: "classify", label: "التصنيف", icon: ClipboardList },
+  { key: "statements", label: "القوائم", icon: ScrollText },
+  { key: "zakat", label: "الزكاة", icon: Landmark },
 ];
 
 const STMT_TABS = [
@@ -1570,28 +1656,27 @@ function MainApp({ user }) {
     return (
       <div style={{ minHeight: "100vh", background: CREAM, fontFamily: "'IBM Plex Sans Arabic', sans-serif" }} dir="rtl">
         <style>{FONTS}</style>
-        <div style={{ background: INK, color: CREAM, padding: "22px 30px" }} className="no-print">
-          <div style={{ maxWidth: 1180, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ background: "#FEFDFB", borderRadius: 10, padding: "8px 12px" }}>
-                <img src={LOGO_URI} alt="Selim Finance" style={{ height: 30, display: "block" }} />
+        <div style={{ background: INK, color: CREAM, padding: "14px 14px" }} className="no-print">
+          <div style={{ maxWidth: 1180, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ background: "#FEFDFB", borderRadius: 8, padding: "6px 9px" }}>
+                <img src={LOGO_URI} alt="Selim Finance" style={{ height: 22, display: "block" }} />
               </div>
               <div>
-                <div style={{ fontFamily: "'Markazi Text', serif", fontSize: 22, fontWeight: 700 }}>القوائم المالية والزكاة</div>
-                <div style={{ fontSize: 12, opacity: 0.75 }}>إدارة قوائم مالية لأكثر من شركة أو فرع، كل واحد بميزانه الخاص</div>
+                <div style={{ fontFamily: "'Markazi Text', serif", fontSize: 16, fontWeight: 700 }}>القوائم المالية والزكاة</div>
               </div>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{ fontSize: 12, opacity: 0.85, direction: "ltr" }}>{user.email}</div>
-              <button onClick={() => auth.signOut()} style={{ background: "rgba(255,255,255,0.08)", border: "none", borderRadius: 8, padding: "7px 12px", color: CREAM, cursor: "pointer", display: "flex", alignItems: "center", gap: 6, fontSize: 12.5 }}>
-                <LogOut size={13} /> خروج
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ fontSize: 10.5, opacity: 0.85, direction: "ltr" }}>{user.email}</div>
+              <button onClick={() => auth.signOut()} style={{ background: "rgba(255,255,255,0.08)", border: "none", borderRadius: 7, padding: "6px 10px", color: CREAM, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontSize: 11.5 }}>
+                <LogOut size={12} /> خروج
               </button>
             </div>
           </div>
         </div>
-        <div style={{ maxWidth: 1180, margin: "0 auto", padding: "34px 30px" }}>
-          <div style={{ fontSize: 12, color: "#847c69", marginBottom: 16, display: "flex", alignItems: "center", gap: 6 }}>
-            <Check size={13} color={GREEN_INK} /> بياناتك محفوظة على السحابة ومتزامنة على أي جهاز تسجّل دخول منه بنفس الحساب
+        <div style={{ maxWidth: 1180, margin: "0 auto", padding: "18px 14px" }}>
+          <div style={{ fontSize: 11, color: "#847c69", marginBottom: 14, display: "flex", alignItems: "center", gap: 6 }}>
+            <Check size={12} color={GREEN_INK} /> بياناتك محفوظة على السحابة ومتزامنة على أي جهاز تسجّل دخول منه بنفس الحساب
           </div>
           {loadingCompanies ? (
             <div style={{ color: "#847c69", fontSize: 13 }}>جارِ تحميل الشركات…</div>
@@ -1607,29 +1692,26 @@ function MainApp({ user }) {
     <div style={{ minHeight: "100vh", background: CREAM, fontFamily: "'IBM Plex Sans Arabic', sans-serif" }} dir="rtl">
       <style>{FONTS}</style>
 
-      <div style={{ background: INK, color: CREAM, padding: "18px 30px" }} className="no-print">
-        <div style={{ maxWidth: 1180, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 14 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <img src={LOGO_URI} alt="Selim Finance" style={{ height: 22, display: "block" }} className="no-print" />
-            <button onClick={() => setScreen("companies")} style={{ background: "rgba(255,255,255,0.08)", border: "none", borderRadius: 8, padding: "8px 12px", color: CREAM, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-              <ArrowRight size={15} /> الشركات
+      <div style={{ background: INK, color: CREAM, padding: "10px 14px" }} className="no-print">
+        <div style={{ maxWidth: 1180, margin: "0 auto" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
+            <button onClick={() => setScreen("companies")} style={{ background: "rgba(255,255,255,0.08)", border: "none", borderRadius: 7, padding: "6px 10px", color: CREAM, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, flexShrink: 0 }}>
+              <ArrowRight size={13} /> الشركات
             </button>
-            <div>
-              <div style={{ fontFamily: "'Markazi Text', serif", fontSize: 22, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
-                {active?.name}
-                <span style={{ fontSize: 10.5, fontWeight: 600, color: GOLD, background: "rgba(184,137,43,0.15)", borderRadius: 20, padding: "2px 9px" }}>
-                  {role === "owner" ? "مالك" : role === "editor" ? "تعديل" : "مشاهدة فقط"}
-                </span>
-              </div>
-              <div style={{ fontSize: 11.5, opacity: 0.7 }}>القوائم المالية والزكاة</div>
-            </div>
+            <img src={LOGO_URI} alt="Selim Finance" style={{ height: 18, display: "block" }} />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <div style={{ fontFamily: "'Markazi Text', serif", fontSize: 18, fontWeight: 700 }}>{active?.name}</div>
+            <span style={{ fontSize: 9.5, fontWeight: 600, color: GOLD, background: "rgba(184,137,43,0.15)", borderRadius: 20, padding: "2px 8px" }}>
+              {role === "owner" ? "مالك" : role === "editor" ? "تعديل" : "مشاهدة فقط"}
+            </span>
           </div>
         </div>
         {sortedPeriods.length > 0 && (
-          <div style={{ maxWidth: 1180, margin: "10px auto 0", display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <div style={{ maxWidth: 1180, margin: "8px auto 0", display: "flex", gap: 5, flexWrap: "wrap" }}>
             {sortedPeriods.map((p) => (
               <button key={p.id} onClick={() => { setActivePeriodId(p.id); setSelectedYear(p.year); if (step === "upload") setStep("statements"); }}
-                style={{ background: activePeriodId === p.id || (!activePeriodId && p.id === sortedPeriods[sortedPeriods.length - 1].id) ? GOLD : "rgba(255,255,255,0.08)", color: activePeriodId === p.id ? INK : CREAM, border: "none", borderRadius: 20, padding: "5px 12px", fontSize: 11.5, cursor: "pointer" }}>
+                style={{ background: activePeriodId === p.id || (!activePeriodId && p.id === sortedPeriods[sortedPeriods.length - 1].id) ? GOLD : "rgba(255,255,255,0.08)", color: activePeriodId === p.id ? INK : CREAM, border: "none", borderRadius: 20, padding: "4px 10px", fontSize: 10.5, cursor: "pointer" }}>
                 {MONTH_NAMES[p.month - 1]} {p.year}
               </button>
             ))}
@@ -1638,22 +1720,22 @@ function MainApp({ user }) {
       </div>
 
       <div style={{ background: "#fff", borderBottom: `1px solid ${RULE}` }} className="no-print">
-        <div style={{ maxWidth: 1180, margin: "0 auto", display: "flex", gap: 6, padding: "0 30px" }}>
+        <div style={{ maxWidth: 1180, margin: "0 auto", display: "flex", gap: 2, padding: "0 10px", overflowX: "auto" }}>
           {STEPS.map((s) => {
             const blockedForViewer = readOnly && (s.key === "upload" || s.key === "classify");
             const enabled = (s.key === "upload" || s.key === "zakat" || (active && sortedPeriods.length)) && !blockedForViewer;
             const isActive = step === s.key;
             return (
               <button key={s.key} disabled={!enabled} onClick={() => enabled && setStep(s.key)}
-                style={{ display: "flex", alignItems: "center", gap: 7, padding: "14px 16px", background: "none", border: "none", borderBottom: isActive ? `3px solid ${GOLD}` : "3px solid transparent", color: isActive ? INK : enabled ? "#6b6455" : "#c9c2ae", fontWeight: isActive ? 700 : 500, fontSize: 14, cursor: enabled ? "pointer" : "not-allowed", fontFamily: "'IBM Plex Sans Arabic', sans-serif" }}>
-                <s.icon size={16} /> {s.label}
+                style={{ display: "flex", alignItems: "center", gap: 5, padding: "10px 10px", background: "none", border: "none", borderBottom: isActive ? `3px solid ${GOLD}` : "3px solid transparent", color: isActive ? INK : enabled ? "#6b6455" : "#c9c2ae", fontWeight: isActive ? 700 : 500, fontSize: 12.5, cursor: enabled ? "pointer" : "not-allowed", fontFamily: "'IBM Plex Sans Arabic', sans-serif", whiteSpace: "nowrap", flexShrink: 0 }}>
+                <s.icon size={13} /> {s.label}
               </button>
             );
           })}
         </div>
       </div>
 
-      <div style={{ maxWidth: 1180, margin: "0 auto", padding: "34px 30px" }}>
+      <div style={{ maxWidth: 1180, margin: "0 auto", padding: "18px 14px" }}>
         {step === "upload" && !readOnly && (
           <div>
             <SectionTitle icon={Upload} sub="ارفع ميزان مراجعة شهر واحد كل مرة — التطبيق هيحفظه كفترة مستقلة">رفع فترة جديدة</SectionTitle>
@@ -1710,7 +1792,7 @@ function MainApp({ user }) {
               ))}
             </div>
             {stmtTab === "home" && (
-              <HomeDashboard company={active} periods={sortedPeriods} year={selectedYear} setYear={setSelectedYear} availableYears={availableYears.length ? availableYears : [selectedYear]} zakatDue={active.zakat && active.zakat.adjustments ? active.zakat.adjustments.reduce((s, a) => s + a.sign * a.amount, 0) * ((active.zakat.rate ?? 2.5) / 100) : 0} />
+              <HomeDashboard company={active} periods={sortedPeriods} year={selectedYear} setYear={setSelectedYear} availableYears={availableYears.length ? availableYears : [selectedYear]} zakatDue={computeZakatTotal(active.zakat)} />
             )}
             {stmtTab === "income_monthly" && (
               figures ? <DetailedIncomeStatement f={figures} title="قائمة الدخل الشهرية" periodLabel={monthlyPeriodLabel} sourceLabel={monthlySourceLabel} /> : <Card style={{ padding: 30, textAlign: "center", color: "#847c69" }}>اختر فترة أولاً من القائمة فوق.</Card>
