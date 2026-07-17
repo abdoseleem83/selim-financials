@@ -502,32 +502,38 @@ function CompanyList({ companies, user, onOpen, onOpenZakat, onAdd, onDelete, on
 
 /* ---------------------------------- منطقة الرفع والتخطيط ---------------------------------- */
 
-function UploadZone({ title, onFile, fileName }) {
+function UploadZone({ title, onFile, onFiles, fileName }) {
   const inputId = useRef(`file-${uid()}`).current;
+  const multiId = useRef(`multi-${uid()}`).current;
   return (
-    <Card style={{ padding: 34, textAlign: "center", borderStyle: "dashed", borderWidth: 2 }}>
-      <FileSpreadsheet size={38} color={GOLD} style={{ margin: "0 auto 10px" }} />
-      <div style={{ fontFamily: "'Markazi Text', serif", fontSize: 22, color: INK, marginBottom: 6 }}>{title}</div>
-      <p style={{ color: "#847c69", fontSize: 13, marginBottom: 16 }}>
+    <Card style={{ padding: 28, textAlign: "center", borderStyle: "dashed", borderWidth: 2 }}>
+      <FileSpreadsheet size={34} color={GOLD} style={{ margin: "0 auto 8px" }} />
+      <div style={{ fontFamily: "'Markazi Text', serif", fontSize: 20, color: INK, marginBottom: 6 }}>{title}</div>
+      <p style={{ color: "#847c69", fontSize: 12.5, marginBottom: 16 }}>
         يدعم ملف ميزان مراجعة عادي (كود / اسم / مدين / دائن) أو تصدير شجرة حسابات هرمية من برنامج الحسابات
       </p>
-      <input
-        id={inputId}
-        type="file"
-        accept=".xlsx,.xls,.csv"
+      <input id={inputId} type="file" accept=".xlsx,.xls,.csv"
         style={{ position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden", clip: "rect(0,0,0,0)" }}
-        onChange={(e) => e.target.files[0] && onFile(e.target.files[0])}
-      />
-      <label
-        htmlFor={inputId}
-        style={{
-          display: "inline-flex", alignItems: "center", gap: 8, background: INK, color: CREAM, border: "none",
-          borderRadius: 8, padding: "10px 20px", fontFamily: "'IBM Plex Sans Arabic', sans-serif", fontWeight: 600,
-          fontSize: 14.5, cursor: "pointer",
-        }}
-      >
-        اختيار ملف الميزان <Upload size={16} />
-      </label>
+        onChange={(e) => e.target.files[0] && onFile(e.target.files[0])} />
+      <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+        <label htmlFor={inputId}
+          style={{ display: "inline-flex", alignItems: "center", gap: 8, background: INK, color: CREAM, border: "none",
+            borderRadius: 8, padding: "10px 18px", fontFamily: "'IBM Plex Sans Arabic', sans-serif", fontWeight: 600, fontSize: 13.5, cursor: "pointer" }}>
+          اختيار ملف واحد <Upload size={15} />
+        </label>
+        {onFiles && (
+          <>
+            <input id={multiId} type="file" accept=".xlsx,.xls,.csv" multiple
+              style={{ position: "absolute", width: 1, height: 1, opacity: 0, overflow: "hidden", clip: "rect(0,0,0,0)" }}
+              onChange={(e) => e.target.files.length && onFiles(Array.from(e.target.files))} />
+            <label htmlFor={multiId}
+              style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#fff", color: INK, border: `1.5px solid ${INK}`,
+                borderRadius: 8, padding: "10px 18px", fontFamily: "'IBM Plex Sans Arabic', sans-serif", fontWeight: 600, fontSize: 13.5, cursor: "pointer" }}>
+              رفع عدة ملفات (شهور) <Upload size={15} />
+            </label>
+          </>
+        )}
+      </div>
       {fileName && <div style={{ marginTop: 12, fontSize: 12.5, color: GREEN_INK }}>تم رفع: {fileName}</div>}
     </Card>
   );
@@ -712,15 +718,16 @@ function computeFigures(rows, openingInventory) {
   const totalEquity = equityAccounts + netProfit;
   const totalLiabEquity = totalLiab + totalEquity;
 
-  const cashRows = assetCurrentRows.filter((r) => /نقد|بنك|صندوق|خزين/.test(r.name));
+  const inv = /مخزون|بضاعة|بضائع/;
+  const cashRows = assetCurrentRows.filter((r) => /نقد|بنك|صندوق|خزين|خزائن/.test(r.name));
   const cash = cashRows.reduce((s, r) => s + r.amount, 0);
-  const customerDebtRows = assetCurrentRows.filter((r) => /عملاء|مدين/.test(r.name));
+  const customerDebtRows = assetCurrentRows.filter((r) => /عملاء|ذمم مدينة|أوراق قبض/.test(r.name) && !inv.test(r.name));
   const customerDebt = customerDebtRows.reduce((s, r) => s + r.amount, 0);
-  const supplierPrepaidRows = assetCurrentRows.filter((r) => /مقدم.*مورد|دفعات مقدمة للموردين/.test(r.name));
+  const supplierPrepaidRows = assetCurrentRows.filter((r) => /مقدم.*مورد|موردين مدين|دفعات مقدمة للموردين/.test(r.name));
   const supplierPrepaid = supplierPrepaidRows.reduce((s, r) => s + r.amount, 0);
-  const customerPrepaidRows = liabilityCurrentRows.filter((r) => /مقدم.*عميل|دفعات مقدمة من العملاء/.test(r.name));
+  const customerPrepaidRows = liabilityCurrentRows.filter((r) => /مقدم.*عميل|عملاء دائن|دفعات مقدمة من العملاء/.test(r.name));
   const customerPrepaid = customerPrepaidRows.reduce((s, r) => s + r.amount, 0);
-  const supplierDebtRows = liabilityCurrentRows.filter((r) => /موردين/.test(r.name));
+  const supplierDebtRows = liabilityCurrentRows.filter((r) => /موردين|موردون/.test(r.name) && !/مدين/.test(r.name));
   const supplierDebt = supplierDebtRows.reduce((s, r) => s + r.amount, 0);
 
   return {
@@ -784,6 +791,87 @@ function mergeFigures(list) {
 }
 
 /* ---------------------------------- عناصر عرض القوائم ---------------------------------- */
+
+/* حساب أرقام فترة واحدة بشكل صحيح:
+   - لو الميزان "تراكمي من بداية السنة" (الوضع الافتراضي في برامج الحسابات): أرقام قائمة الدخل
+     للشهر = التراكمي الحالي − التراكمي للفترة السابقة في نفس السنة، والمركز المالي من الميزان الحالي مباشرة.
+   - لو الميزان "حركة الشهر فقط": الأرقام تؤخذ كما هي. */
+function periodFigures(sortedPeriods, period, yearOpeningInv) {
+  const fCurr = computeFigures(period.rows, 0);
+  const isCum = period.cumulative !== false;
+  const samePrev = sortedPeriods.filter((p) => p.year === period.year && p.month < period.month).pop();
+
+  const monthOpenInv = samePrev ? computeFigures(samePrev.rows, 0).closingInventory : (yearOpeningInv || period.openingInventory || 0);
+
+  if (!isCum || !samePrev) {
+    const cogs = monthOpenInv + fCurr.purchases - fCurr.closingInventory;
+    const grossProfit = fCurr.netSales - cogs;
+    const operatingProfit = grossProfit - fCurr.opex;
+    const netProfit = operatingProfit + fCurr.otherIncome - fCurr.otherExpense - fCurr.tax;
+    return {
+      ...fCurr,
+      openInv: monthOpenInv, cogs, grossProfit,
+      grossMargin: fCurr.netSales ? grossProfit / fCurr.netSales : 0,
+      operatingProfit, operatingMargin: fCurr.netSales ? operatingProfit / fCurr.netSales : 0,
+      netProfit, netMargin: fCurr.netSales ? netProfit / fCurr.netSales : 0,
+      totalComprehensive: netProfit + fCurr.oci,
+    };
+  }
+
+  const fPrev = computeFigures(samePrev.rows, 0);
+  const d = (k) => (fCurr[k] || 0) - (fPrev[k] || 0);
+  const diffRows = (key) => {
+    const prevMap = {};
+    fPrev[key].forEach((r) => { prevMap[r.name] = r.amount; });
+    const names = new Set([...fCurr[key].map((r) => r.name), ...Object.keys(prevMap)]);
+    const currMap = {};
+    fCurr[key].forEach((r) => { currMap[r.name] = r.amount; });
+    return [...names].map((name) => ({ name, amount: (currMap[name] || 0) - (prevMap[name] || 0) })).filter((r) => Math.abs(r.amount) > 0.004);
+  };
+
+  const grossSales = d("grossSales");
+  const salesReturns = d("salesReturns");
+  const salesDiscounts = d("salesDiscounts");
+  const netSales = grossSales - salesReturns - salesDiscounts;
+  const purchases = d("purchases");
+  const cogs = monthOpenInv + purchases - fCurr.closingInventory;
+  const grossProfit = netSales - cogs;
+  const opexRows = diffRows("opexRows");
+  const opex = d("opex");
+  const otherIncomeRows = diffRows("otherIncomeRows");
+  const otherIncome = d("otherIncome");
+  const otherExpense = d("otherExpense");
+  const tax = d("tax");
+  const operatingProfit = grossProfit - opex;
+  const netProfit = operatingProfit + otherIncome - otherExpense - tax;
+  const oci = d("oci");
+
+  return {
+    ...fCurr, // المركز المالي وأرصدة الحسابات من الميزان الحالي (as-of-date) — صحيح محاسبيًا
+    grossSales, salesReturns, salesDiscounts, netSales,
+    returnsRatio: grossSales ? salesReturns / grossSales : 0,
+    openInv: monthOpenInv, purchases, cogs, grossProfit,
+    grossMargin: netSales ? grossProfit / netSales : 0,
+    opexRows, opex, opexRatio: netSales ? opex / netSales : 0,
+    operatingProfit, operatingMargin: netSales ? operatingProfit / netSales : 0,
+    otherIncomeRows, otherIncome, otherExpense, tax,
+    netProfit, netMargin: netSales ? netProfit / netSales : 0,
+    oci, totalComprehensive: netProfit + oci,
+  };
+}
+
+/* الأرقام السنوية: لو الموازين تراكمية يكفي آخر ميزان في السنة (مع مخزون بداية السنة)،
+   ولو شهرية تُجمَّع الفترات. */
+function yearFigures(sortedPeriods, year, yearOpeningInv) {
+  const ps = sortedPeriods.filter((p) => p.year === year);
+  if (!ps.length) return null;
+  const anyCumulative = ps.some((p) => p.cumulative !== false);
+  if (anyCumulative) {
+    const last = ps[ps.length - 1];
+    return computeFigures(last.rows, yearOpeningInv ?? (ps[0].openingInventory || 0));
+  }
+  return mergeFigures(ps.map((p) => periodFigures(sortedPeriods, p, yearOpeningInv)));
+}
 
 function Line({ label, value, bold, indent, ruleTop }) {
   return (
@@ -925,7 +1013,7 @@ function BalanceSheet({ f, periodLabel }) {
           <Group title="الخصوم غير المتداولة" rows={f.liabilityNoncurrentRows} total={f.nonCurrentLiab} />
           <TotalRow label="إجمالي الخصوم" total={f.totalLiab} />
           <Group title="حقوق الملكية" rows={f.equityAccountRows} total={f.equityAccounts} />
-          <ItemRow label="صافي ربح الفترة" partial={f.netProfit} />
+          <ItemRow label="أرباح متراكمة غير مرحّلة (من بداية السنة حتى هذه الفترة)" partial={f.netProfit} />
           <TotalRow label="إجمالي حقوق الملكية" total={f.totalEquity} />
           <TotalRow label="إجمالي الخصوم وحقوق الملكية" total={f.totalLiab + f.totalEquity} mark />
         </StmtTable>
@@ -1035,16 +1123,16 @@ function KpiCard({ label, value, isRatio, emoji }) {
 function HomeDashboard({ company, periods, year, setYear, availableYears, zakatDue }) {
   const printId = "print-home";
   const yearPeriods = periods.filter((p) => p.year === year).sort((a, b) => a.month - b.month);
+  const yearOpenInv = yearPeriods.length ? (yearPeriods[0].openingInventory || 0) : 0;
   const monthly = MONTH_NAMES.map((name, i) => {
     const p = yearPeriods.find((x) => x.month === i + 1);
     if (!p) return { name, empty: true };
-    const f = computeFigures(p.rows, p.openingInventory || 0);
+    const f = periodFigures(periods, p, yearOpenInv);
     return { name, empty: false, ...f };
   });
   const activeMonths = monthly.filter((m) => !m.empty);
-  const figuresList = activeMonths.map((m) => m);
-  const annual = figuresList.length ? mergeFigures(figuresList) : null;
-  const latest = yearPeriods.length ? computeFigures(yearPeriods[yearPeriods.length - 1].rows, yearPeriods[yearPeriods.length - 1].openingInventory || 0) : null;
+  const annual = yearFigures(periods, year, yearOpenInv);
+  const latest = yearPeriods.length ? computeFigures(yearPeriods[yearPeriods.length - 1].rows, 0) : null;
 
   if (!annual) {
     return (
@@ -1224,6 +1312,7 @@ function ZakatModule({ data, setData, readOnly }) {
   const [pendingRows, setPendingRows] = useState(null);
   const [mode, setMode] = useState(null);
   const [mapping, setMapping] = useState(null);
+  const [zDraftRows, setZDraftRows] = useState(null);
 
   const rows = data.rows;
   const f = useMemo(() => (rows ? computeFigures(rows) : null), [rows]);
@@ -1236,20 +1325,20 @@ function ZakatModule({ data, setData, readOnly }) {
     if (res.mode === "tree") setPendingRows(res.rows);
     else setMapping(res.mapping);
   };
+  const saveZakatDraft = () => { setData({ rows: zDraftRows, items: null }); setZDraftRows(null); };
 
   useEffect(() => {
     if (f && !data.items) {
-      const otherDebtors = round2(Math.max(f.currentAssets - f.cash - f.customerDebt - f.supplierPrepaid - f.closingInventory, 0));
-      const taxLiab = round2(f.liabilityCurrentRows.filter((r) => /ضريبة/.test(r.name)).reduce((s, r) => s + r.amount, 0));
+      const taxLiab = round2(Math.abs(f.liabilityCurrentRows.filter((r) => /ضريبة/.test(r.name)).reduce((s, r) => s + r.amount, 0)));
       setData({
         items: [
           { id: uid(), group: "asset", label: "النقدية والخزائن", amount: round2(f.cash) },
-          { id: uid(), group: "asset", label: "المدينون الآخرون والأمانات", amount: otherDebtors },
-          { id: uid(), group: "asset", label: "ذمم العملاء المدينة (المرجوة)", amount: round2(f.customerDebt) },
-          { id: uid(), group: "asset", label: "دفعات مقدمة للموردين", amount: round2(f.supplierPrepaid) },
+          { id: uid(), group: "asset", label: "المدينون الآخرون والأمانات", amount: 0 },
+          { id: uid(), group: "asset", label: "ذمم العملاء المدينة (المرجوة)", amount: round2(Math.abs(f.customerDebt)) },
+          { id: uid(), group: "asset", label: "دفعات مقدمة للموردين", amount: round2(Math.abs(f.supplierPrepaid)) },
           { id: uid(), group: "asset", label: "المخزون التجاري (بسعر السوق)", amount: round2(f.closingInventory) },
-          { id: uid(), group: "liability", label: "موردون (أرصدة دائنة)", amount: round2(f.supplierDebt) },
-          { id: uid(), group: "liability", label: "دفعات مقدمة من العملاء", amount: round2(f.customerPrepaid) },
+          { id: uid(), group: "liability", label: "موردون (أرصدة دائنة)", amount: round2(Math.abs(f.supplierDebt)) },
+          { id: uid(), group: "liability", label: "دفعات مقدمة من العملاء", amount: round2(Math.abs(f.customerPrepaid)) },
           { id: uid(), group: "liability", label: "ضرائب مستحقة", amount: taxLiab },
         ],
       });
@@ -1289,11 +1378,13 @@ function ZakatModule({ data, setData, readOnly }) {
     <div style={{ marginBottom: 20 }}>
       <div style={{ fontWeight: 700, color: GOLD, marginBottom: 8, fontSize: 13.5 }}>{title}</div>
       {list.map((it) => (
-        <div key={it.id} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-          <input value={it.label} disabled={readOnly} onChange={(e) => updateItem(it.id, { label: e.target.value })}
-            style={{ flex: 1, minWidth: 0, border: `1px solid ${RULE}`, borderRadius: 7, padding: "6px 10px", fontFamily: "'IBM Plex Sans Arabic', sans-serif", fontSize: 12.5, background: readOnly ? "#f3f0e8" : "#fff" }} />
-          <NumInput value={it.amount} disabled={readOnly} onChange={(e) => updateItem(it.id, { amount: parseFloat(e.target.value) || 0 })} style={{ width: 130 }} />
-          {!readOnly && <button onClick={() => removeItem(it.id)} style={{ background: "none", border: "none", cursor: "pointer", color: RED_INK, flexShrink: 0 }}><Trash2 size={14} /></button>}
+        <div key={it.id} style={{ border: `1px solid ${RULE}`, borderRadius: 9, padding: 10, marginBottom: 8, background: "#fff" }}>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
+            <input value={it.label} disabled={readOnly} onChange={(e) => updateItem(it.id, { label: e.target.value })}
+              style={{ flex: 1, minWidth: 0, border: "none", fontFamily: "'IBM Plex Sans Arabic', sans-serif", fontSize: 13, fontWeight: 600, color: INK, background: "transparent", outline: "none" }} />
+            {!readOnly && <button onClick={() => removeItem(it.id)} style={{ background: "none", border: "none", cursor: "pointer", color: RED_INK, flexShrink: 0 }}><Trash2 size={14} /></button>}
+          </div>
+          <NumInput value={it.amount} disabled={readOnly} onChange={(e) => updateItem(it.id, { amount: parseFloat(e.target.value) || 0 })} style={{ width: "100%" }} />
         </div>
       ))}
       {!readOnly && <GhostBtn icon={Plus} onClick={() => addItem(group)}>إضافة بند</GhostBtn>}
@@ -1308,16 +1399,22 @@ function ZakatModule({ data, setData, readOnly }) {
     <div>
       <SectionTitle icon={Landmark} sub="ارفع ميزان مراجعة منفصل بتاريخ بداية الحول لحساب وعاء الزكاة">حساب الزكاة الشرعية</SectionTitle>
 
-      {!rows && !readOnly && (
+      {!rows && !zDraftRows && !readOnly && (
         <>
           <UploadZone title="رفع ميزان مراجعة بداية الحول" onFile={onFile} fileName={file} />
           {mode === "tree" && pendingRows && (
-            <TreeConfirm rows={pendingRows} onConfirm={() => setData({ rows: pendingRows })} onFallback={() => { setMode("flat"); setMapping(detectFlatColumns(parsed) || { headerRow: 0, code: 0, name: 1, debit: 2, credit: 3 }); }} />
+            <TreeConfirm rows={pendingRows} onConfirm={() => setZDraftRows(pendingRows)} onFallback={() => { setMode("flat"); setMapping(detectFlatColumns(parsed) || { headerRow: 0, code: 0, name: 1, debit: 2, credit: 3 }); }} />
           )}
           {mode === "flat" && parsed && mapping && (
-            <MappingConfirm rawRows={parsed} mapping={mapping} setMapping={setMapping} onConfirm={() => setData({ rows: buildFlatRows(parsed, mapping) })} />
+            <MappingConfirm rawRows={parsed} mapping={mapping} setMapping={setMapping} onConfirm={() => setZDraftRows(buildFlatRows(parsed, mapping))} />
           )}
         </>
+      )}
+      {!rows && zDraftRows && !readOnly && (
+        <div>
+          <p style={{ fontSize: 13, color: "#6b6455", marginBottom: 12 }}>راجع تصنيف كل حساب، وخصوصًا حسابات حقوق الملكية (لازم كل شريك يكون حساب مصنّف "حقوق ملكية" لوحده حتى يظهر في حساب الزكاة الفردي)، ثم اضغط الزرار تحت لحفظ ميزان الزكاة.</p>
+          <ClassifyTable rows={zDraftRows} setRows={setZDraftRows} onNext={saveZakatDraft} nextLabel="✓ حفظ ميزان الزكاة" />
+        </div>
       )}
       {!rows && readOnly && (
         <Card style={{ padding: 30, textAlign: "center", color: "#847c69" }}>لا توجد بيانات زكاة مرفوعة لهذه الشركة بعد، وصلاحيتك هنا مشاهدة فقط.</Card>
@@ -1325,6 +1422,14 @@ function ZakatModule({ data, setData, readOnly }) {
 
       {rows && f && (
         <div>
+          {!readOnly && (
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+              <PrintBtn targetId="print-zakat" />
+              <GhostBtn icon={RefreshCw} onClick={() => { if (window.confirm("هيتم مسح ميزان الزكاة الحالي وتحتاج ترفع ميزان جديد. متأكد؟")) setData({ rows: null, items: null }); }}>رفع ميزان زكاة جديد</GhostBtn>
+            </div>
+          )}
+          {readOnly && <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}><PrintBtn targetId="print-zakat" /></div>}
+          <div id="print-zakat" className="print-area">
           <Card style={{ padding: 18, marginBottom: 16 }}>
             <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
               <div>
@@ -1394,6 +1499,7 @@ function ZakatModule({ data, setData, readOnly }) {
             <div style={{ fontSize: 12.5, opacity: 0.8, marginTop: 4 }}>الزكاة المستحقة الإجمالية</div>
             <div style={{ fontFamily: "'Markazi Text', serif", fontSize: 32, color: GOLD, fontWeight: 700 }}>{fmt(totalDue)}</div>
           </Card>
+          </div>
         </div>
       )}
     </div>
@@ -1441,31 +1547,49 @@ function getRole(company, user) {
   return null;
 }
 
-function SavePeriodBar({ year, setYear, month, setMonth, openingInv, setOpeningInv, onSave, isNew }) {
+function SavePeriodBar({ year, setYear, month, setMonth, openingInv, setOpeningInv, cumulative, setCumulative, onSave, isNew }) {
   const years = [];
   const base = new Date().getFullYear();
   for (let y = base - 2; y <= base + 1; y++) years.push(y);
   return (
-    <Card style={{ padding: 20, marginBottom: 18 }}>
-      <div style={{ fontWeight: 700, marginBottom: 10, color: INK }}>{isNew ? "حدد الفترة اللي الميزان ده بيمثلها" : "بيانات الفترة"}</div>
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end" }}>
+    <Card style={{ padding: 16, marginBottom: 14 }}>
+      <div style={{ fontWeight: 700, marginBottom: 10, color: INK, fontSize: 13.5 }}>{isNew ? "حدد الفترة اللي الميزان ده بيمثلها" : "بيانات الفترة"}</div>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
         <div>
-          <label style={{ fontSize: 12.5, color: "#6b6455" }}>السنة</label>
-          <Select value={year} onChange={(e) => setYear(parseInt(e.target.value))} style={{ width: 110 }}>
+          <label style={{ fontSize: 11.5, color: "#6b6455" }}>السنة</label>
+          <Select value={year} onChange={(e) => setYear(parseInt(e.target.value))} style={{ width: 95 }}>
             {years.map((y) => (<option key={y} value={y}>{y}</option>))}
           </Select>
         </div>
         <div>
-          <label style={{ fontSize: 12.5, color: "#6b6455" }}>الشهر</label>
-          <Select value={month} onChange={(e) => setMonth(parseInt(e.target.value))} style={{ width: 130 }}>
+          <label style={{ fontSize: 11.5, color: "#6b6455" }}>الشهر</label>
+          <Select value={month} onChange={(e) => setMonth(parseInt(e.target.value))} style={{ width: 110 }}>
             {MONTH_NAMES.map((m, i) => (<option key={i} value={i + 1}>{m}</option>))}
           </Select>
         </div>
         <div>
-          <label style={{ fontSize: 12.5, color: "#6b6455" }}>مخزون بداية الفترة</label>
-          <NumInput value={openingInv} onChange={(e) => setOpeningInv(parseFloat(e.target.value) || 0)} style={{ width: 160 }} />
+          <label style={{ fontSize: 11.5, color: "#6b6455" }}>مخزون بداية السنة</label>
+          <NumInput value={openingInv} onChange={(e) => setOpeningInv(parseFloat(e.target.value) || 0)} style={{ width: 130 }} />
         </div>
-        <PrimaryBtn icon={Check} onClick={onSave}>{isNew ? "حفظ الفترة" : "حفظ التعديلات"}</PrimaryBtn>
+      </div>
+      <div style={{ marginTop: 12 }}>
+        <label style={{ fontSize: 11.5, color: "#6b6455", display: "block", marginBottom: 5 }}>نوع أرصدة الميزان</label>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button onClick={() => setCumulative(true)} style={{ border: `1.5px solid ${cumulative ? INK : RULE}`, background: cumulative ? INK : "#fff", color: cumulative ? CREAM : INK, borderRadius: 8, padding: "7px 12px", fontSize: 11.5, cursor: "pointer", fontFamily: "'IBM Plex Sans Arabic', sans-serif" }}>
+            تراكمي من بداية السنة (الافتراضي في برامج الحسابات)
+          </button>
+          <button onClick={() => setCumulative(false)} style={{ border: `1.5px solid ${!cumulative ? INK : RULE}`, background: !cumulative ? INK : "#fff", color: !cumulative ? CREAM : INK, borderRadius: 8, padding: "7px 12px", fontSize: 11.5, cursor: "pointer", fontFamily: "'IBM Plex Sans Arabic', sans-serif" }}>
+            حركة الشهر فقط
+          </button>
+        </div>
+        <p style={{ fontSize: 10.5, color: "#8a8271", marginTop: 6 }}>
+          {cumulative
+            ? "التطبيق هيحسب أرقام كل شهر تلقائيًا بطرح الميزان التراكمي السابق — وده الصح لو الميزان بيطلع بـ«رصيد نهاية المدة»"
+            : "هيتعامل مع أرقام قائمة الدخل في الميزان على إنها حركة الشهر ده فقط"}
+        </p>
+      </div>
+      <div style={{ position: "sticky", bottom: 10, marginTop: 14, zIndex: 5 }}>
+        <PrimaryBtn icon={Check} onClick={onSave}>{isNew ? "✓ حفظ الفترة" : "✓ حفظ التعديلات"}</PrimaryBtn>
       </div>
     </Card>
   );
@@ -1491,6 +1615,7 @@ function MainApp({ user }) {
   const [draftYear, setDraftYear] = useState(new Date().getFullYear());
   const [draftMonth, setDraftMonth] = useState(new Date().getMonth() + 1);
   const [draftOpeningInv, setDraftOpeningInv] = useState(0);
+  const [draftCumulative, setDraftCumulative] = useState(true);
 
   const [activePeriodId, setActivePeriodId] = useState(null);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
@@ -1596,10 +1721,47 @@ function MainApp({ user }) {
     else setMapping(res.mapping);
   };
 
+  const [batchBusy, setBatchBusy] = useState(false);
+  const onFiles = async (files) => {
+    setBatchBusy(true);
+    try {
+      // رتّب الملفات أبجديًا حسب الاسم (عادة بتبقى مرقّمة بالشهور)
+      const sorted = [...files].sort((a, b) => a.name.localeCompare(b.name, "ar", { numeric: true }));
+      let baseMonth, baseYear, openInv;
+      if (sortedPeriods.length) {
+        const last = sortedPeriods[sortedPeriods.length - 1];
+        baseMonth = last.month === 12 ? 1 : last.month + 1;
+        baseYear = last.month === 12 ? last.year + 1 : last.year;
+      } else {
+        const now = new Date();
+        baseMonth = 1; baseYear = now.getFullYear();
+      }
+      const newPeriods = [];
+      for (let i = 0; i < sorted.length; i++) {
+        const res = await parseWorkbook(sorted[i]);
+        const rows = res.mode === "tree" ? res.rows : buildFlatRows(res.rawRows, res.mapping);
+        let m = baseMonth + i, y = baseYear;
+        while (m > 12) { m -= 12; y += 1; }
+        newPeriods.push({ id: uid(), year: y, month: m, rows, openingInventory: 0, cumulative: true, uploadedAt: Date.now(), fileName: sorted[i].name });
+      }
+      const others = periods.filter((p) => !newPeriods.some((np) => np.year === p.year && np.month === p.month));
+      patchCompany({ periods: [...others, ...newPeriods] });
+      const firstNew = newPeriods[0];
+      if (firstNew) { setActivePeriodId(firstNew.id); setSelectedYear(firstNew.year); }
+      setStep("statements");
+      setStmtTab("home");
+      alert(`تم رفع ${newPeriods.length} ميزان بنجاح وتوزيعهم على الشهور تلقائيًا. راجع تصنيف الحسابات لكل شهر من تاب «رفع فترة» ← تعديل، وصحّح أي تصنيف أو تاريخ لو لزم.`);
+    } catch (e) {
+      alert("حصل خطأ أثناء رفع الملفات: " + e.message);
+    }
+    setBatchBusy(false);
+  };
+
   const beginDraft = (rows) => {
     setDraftRows(rows);
     setDraftIsNew(true);
     setDraftPeriodId(uid());
+    setDraftCumulative(true);
     const now = new Date();
     let y = now.getFullYear(), m = now.getMonth() + 1;
     // اقترح الشهر التالي لآخر فترة محفوظة
@@ -1607,8 +1769,8 @@ function MainApp({ user }) {
       const last = sortedPeriods[sortedPeriods.length - 1];
       m = last.month === 12 ? 1 : last.month + 1;
       y = last.month === 12 ? last.year + 1 : last.year;
-      const lastFigures = computeFigures(last.rows, last.openingInventory || 0);
-      setDraftOpeningInv(round2(lastFigures.closingInventory));
+      const firstOfYear = sortedPeriods.find((p) => p.year === (last.month === 12 ? last.year + 1 : last.year));
+      setDraftOpeningInv(firstOfYear ? (firstOfYear.openingInventory || 0) : (last.month === 12 ? round2(computeFigures(last.rows, 0).closingInventory) : (last.openingInventory || 0)));
     } else {
       setDraftOpeningInv(0);
     }
@@ -1626,11 +1788,12 @@ function MainApp({ user }) {
     setDraftYear(p.year);
     setDraftMonth(p.month);
     setDraftOpeningInv(p.openingInventory || 0);
+    setDraftCumulative(p.cumulative !== false);
     setStep("classify");
   };
 
   const finalizeDraft = () => {
-    const periodObj = { id: draftPeriodId, year: draftYear, month: draftMonth, rows: draftRows, openingInventory: draftOpeningInv, uploadedAt: Date.now() };
+    const periodObj = { id: draftPeriodId, year: draftYear, month: draftMonth, rows: draftRows, openingInventory: draftOpeningInv, cumulative: draftCumulative, uploadedAt: Date.now() };
     savePeriod(periodObj);
     setActivePeriodId(draftPeriodId);
     setSelectedYear(draftYear);
@@ -1640,17 +1803,31 @@ function MainApp({ user }) {
     resetUploadState();
   };
 
-  const figures = useMemo(() => (activePeriod ? computeFigures(activePeriod.rows, activePeriod.openingInventory || 0) : null), [activePeriod]);
+  const yearOpeningInvOf = (y) => {
+    const first = sortedPeriods.find((p) => p.year === y);
+    return first ? (first.openingInventory || 0) : 0;
+  };
+
+  // أرقام الشهر النشط: قائمة الدخل للشهر وحده (بعد طرح التراكمي السابق لو الميزان تراكمي)
+  const figures = useMemo(() => (activePeriod ? periodFigures(sortedPeriods, activePeriod, yearOpeningInvOf(activePeriod.year)) : null), [activePeriod, sortedPeriods]);
   const monthlyPeriodLabel = activePeriod ? `قائمة الدخل الشهرية ◆ ${MONTH_NAMES[activePeriod.month - 1]} ${activePeriod.year}` : "";
   const monthlySourceLabel = activePeriod ? `من واقع ميزان مراجعة شهر ${MONTH_NAMES[activePeriod.month - 1]} ${activePeriod.year}` : "";
 
+  // المركز المالي: أرصدة الميزان الحالي كما هي، وصافي الربح التراكمي منذ بداية السنة
+  // (وفق العرض المحاسبي السليم: الأصول = الخصوم + حقوق الملكية + أرباح الفترة المتجمعة)
+  const balanceFigures = useMemo(() => {
+    if (!activePeriod) return null;
+    const asOf = computeFigures(activePeriod.rows, 0);
+    const ytd = yearFigures(sortedPeriods.filter((p) => p.year === activePeriod.year && p.month <= activePeriod.month), activePeriod.year, yearOpeningInvOf(activePeriod.year));
+    const ytdProfit = ytd ? ytd.netProfit : asOf.netProfit;
+    const totalEquity = asOf.equityAccounts + ytdProfit;
+    return { ...asOf, netProfit: ytdProfit, totalEquity, balanceDiff: asOf.totalAssets - (asOf.totalLiab + totalEquity) };
+  }, [activePeriod, sortedPeriods]);
+
   const yearPeriods = sortedPeriods.filter((p) => p.year === selectedYear);
-  const annualFigures = useMemo(() => {
-    if (!yearPeriods.length) return null;
-    return mergeFigures(yearPeriods.map((p) => computeFigures(p.rows, p.openingInventory || 0)));
-  }, [yearPeriods]);
+  const annualFigures = useMemo(() => yearFigures(sortedPeriods, selectedYear, yearOpeningInvOf(selectedYear)), [sortedPeriods, selectedYear]);
   const annualPeriodLabel = `قائمة الدخل السنوية ◆ ${selectedYear}`;
-  const annualSourceLabel = `تجميع ${yearPeriods.length} ${yearPeriods.length === 1 ? "شهر فعلي" : "أشهر فعلية"} من واقع الموازين الشهرية`;
+  const annualSourceLabel = `${yearPeriods.length} ${yearPeriods.length === 1 ? "شهر فعلي" : "أشهر فعلية"} من واقع الموازين الشهرية`;
 
   if (screen === "companies") {
     return (
@@ -1738,8 +1915,9 @@ function MainApp({ user }) {
       <div style={{ maxWidth: 1180, margin: "0 auto", padding: "18px 14px" }}>
         {step === "upload" && !readOnly && (
           <div>
-            <SectionTitle icon={Upload} sub="ارفع ميزان مراجعة شهر واحد كل مرة — التطبيق هيحفظه كفترة مستقلة">رفع فترة جديدة</SectionTitle>
-            <UploadZone title="رفع ميزان مراجعة الشهر" onFile={onFile} fileName={file} />
+            <SectionTitle icon={Upload} sub="ارفع ميزان شهر واحد، أو عدة ملفات دفعة واحدة (كل ملف = شهر) وسيوزّعها التطبيق تلقائيًا">رفع فترة جديدة</SectionTitle>
+            {batchBusy && <Card style={{ padding: 16, marginBottom: 12, textAlign: "center", color: GOLD, fontWeight: 600 }}>جارِ رفع ومعالجة الملفات…</Card>}
+            <UploadZone title="رفع ميزان مراجعة" onFile={onFile} onFiles={onFiles} fileName={file} />
             {mode === "tree" && pendingRows && (
               <TreeConfirm rows={pendingRows} onConfirm={confirmTree} onFallback={() => { setMode("flat"); setMapping(detectFlatColumns(parsed) || { headerRow: 0, code: 0, name: 1, debit: 2, credit: 3 }); }} />
             )}
@@ -1748,19 +1926,26 @@ function MainApp({ user }) {
             )}
             {sortedPeriods.length > 0 && (
               <div style={{ marginTop: 24 }}>
-                <div style={{ fontWeight: 700, marginBottom: 10, color: INK, fontSize: 13.5 }}>الفترات المحفوظة</div>
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {sortedPeriods.map((p) => (
-                    <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 6, background: "#fff", border: `1px solid ${RULE}`, borderRadius: 20, padding: "5px 6px 5px 12px" }}>
-                      <span style={{ fontSize: 12.5 }}>{MONTH_NAMES[p.month - 1]} {p.year}</span>
-                      {!readOnly && (
-                        <>
-                          <button onClick={() => startEditPeriod(p)} style={{ background: "none", border: "none", cursor: "pointer", color: "#8a8271" }}><Pencil size={12} /></button>
-                          {isOwner && <button onClick={() => deletePeriod(p.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#c95a52" }}><Trash2 size={12} /></button>}
-                        </>
-                      )}
-                    </div>
-                  ))}
+                <div style={{ fontWeight: 700, marginBottom: 10, color: INK, fontSize: 14 }}>الموازين المرفوعة ({sortedPeriods.length})</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10 }}>
+                  {sortedPeriods.map((p) => {
+                    const pf = computeFigures(p.rows, 0);
+                    return (
+                      <Card key={p.id} style={{ padding: 12 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                          <span style={{ fontWeight: 700, fontSize: 13.5, color: INK }}>{MONTH_NAMES[p.month - 1]} {p.year}</span>
+                          {p.cumulative !== false && <span style={{ fontSize: 8.5, background: "#eef2e9", color: GREEN_INK, borderRadius: 10, padding: "1px 6px" }}>تراكمي</span>}
+                        </div>
+                        <div style={{ fontSize: 10.5, color: "#847c69", marginBottom: 8 }}>{p.rows.length} حساب · مبيعات {fmt(pf.grossSales)}</div>
+                        {!readOnly && (
+                          <div style={{ display: "flex", gap: 6 }}>
+                            <button onClick={() => startEditPeriod(p)} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, background: "#fff", color: INK, border: `1px solid ${RULE}`, borderRadius: 6, padding: "5px", fontSize: 11, cursor: "pointer", fontFamily: "'IBM Plex Sans Arabic', sans-serif" }}><Pencil size={11} /> تعديل</button>
+                            {isOwner && <button onClick={() => { if (confirm(`حذف ميزان ${MONTH_NAMES[p.month - 1]} ${p.year}؟`)) deletePeriod(p.id); }} style={{ display: "flex", alignItems: "center", justifyContent: "center", background: "#fff", color: RED_INK, border: `1px solid ${RULE}`, borderRadius: 6, padding: "5px 8px", cursor: "pointer" }}><Trash2 size={11} /></button>}
+                          </div>
+                        )}
+                      </Card>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -1773,7 +1958,7 @@ function MainApp({ user }) {
         {step === "classify" && draftRows && (
           <div>
             <SectionTitle icon={ClipboardList} sub="راجع التصنيف المقترح لكل حساب وعدّله إذا لزم الأمر">تصنيف الحسابات</SectionTitle>
-            <SavePeriodBar year={draftYear} setYear={setDraftYear} month={draftMonth} setMonth={setDraftMonth} openingInv={draftOpeningInv} setOpeningInv={setDraftOpeningInv} onSave={finalizeDraft} isNew={draftIsNew} />
+            <SavePeriodBar year={draftYear} setYear={setDraftYear} month={draftMonth} setMonth={setDraftMonth} openingInv={draftOpeningInv} setOpeningInv={setDraftOpeningInv} cumulative={draftCumulative} setCumulative={setDraftCumulative} onSave={finalizeDraft} isNew={draftIsNew} />
             <ClassifyTable rows={draftRows} setRows={setDraftRows} onNext={finalizeDraft} nextLabel={draftIsNew ? "حفظ الفترة والانتقال للقوائم" : "حفظ التعديلات"} />
           </div>
         )}
@@ -1801,7 +1986,7 @@ function MainApp({ user }) {
               annualFigures ? <DetailedIncomeStatement f={annualFigures} title="قائمة الدخل السنوية" periodLabel={annualPeriodLabel} sourceLabel={annualSourceLabel} /> : <Card style={{ padding: 30, textAlign: "center", color: "#847c69" }}>لا توجد فترات لسنة {selectedYear}.</Card>
             )}
             {stmtTab === "balance" && (
-              figures ? <BalanceSheet f={figures} periodLabel={activePeriod ? `كما في نهاية ${MONTH_NAMES[activePeriod.month - 1]} ${activePeriod.year}` : ""} /> : <Card style={{ padding: 30, textAlign: "center", color: "#847c69" }}>اختر فترة أولاً من القائمة فوق.</Card>
+              balanceFigures ? <BalanceSheet f={balanceFigures} periodLabel={activePeriod ? `كما في نهاية ${MONTH_NAMES[activePeriod.month - 1]} ${activePeriod.year}` : ""} /> : <Card style={{ padding: 30, textAlign: "center", color: "#847c69" }}>اختر فترة أولاً من القائمة فوق.</Card>
             )}
             {stmtTab === "equity" && activePeriod && figures && (
               <EquityStatement rows={activePeriod.rows} f={figures} opening={active.opening || {}} setOpening={(o) => patchCompany({ opening: o })} periodLabel={monthlyPeriodLabel} readOnly={readOnly} />
