@@ -194,15 +194,16 @@ function detectFlatColumns(rows) {
 function detectTreeColumns(rows) {
   for (let r = 0; r < Math.min(rows.length, 40); r++) {
     const row = rows[r].map((c) => String(c ?? ""));
-    let code = -1, name = -1, ending = -1, netDebit = -1, netCredit = -1;
+    let code = -1, name = -1, ending = -1, opening = -1, netDebit = -1, netCredit = -1;
     row.forEach((cell, i) => {
       if (name === -1 && /اسم الحساب/.test(cell)) name = i;
       if (code === -1 && /رقم الحساب/.test(cell)) code = i;
       if (ending === -1 && /رصيد نهاية/.test(cell)) ending = i;
+      if (opening === -1 && /رصيد بداية/.test(cell)) opening = i;
       if (netDebit === -1 && /صافي الحركة/.test(cell) && /مدين/.test(cell)) netDebit = i;
       if (netCredit === -1 && /صافي الحركة/.test(cell) && /دائن/.test(cell)) netCredit = i;
     });
-    if (name !== -1 && ending !== -1) return { headerRow: r, code, name, ending, netDebit, netCredit };
+    if (name !== -1 && ending !== -1) return { headerRow: r, code, name, ending, opening, netDebit, netCredit };
   }
   return null;
 }
@@ -228,7 +229,17 @@ function cleanAccName(raw) {
   return String(raw ?? "").replace(/^\[/, "").replace(/\]$/, "").replace(/-+\s*$/, "").trim();
 }
 
+function parseSignedNum(raw) {
+  if (raw === null || raw === undefined || raw === "") return 0;
+  let s = String(raw).trim().replace(/,/g, "");
+  const last = s.slice(-1);
+  if (last === "م" || last === "د") s = s.slice(0, -1).trim();
+  const v = parseFloat(s);
+  return isNaN(v) ? 0 : v;
+}
+
 function buildTreeRows(rawRows, h) {
+  // اقرأ كل الصفوف مع الكود والاسم والأرصدة (افتتاحي/حركة/نهائي)
   const all = [];
   for (let r = h.headerRow + 1; r < rawRows.length; r++) {
     const row = rawRows[r];
@@ -236,62 +247,98 @@ function buildTreeRows(rawRows, h) {
     const nameRaw = h.name >= 0 ? row[h.name] : "";
     if (nameRaw === undefined || nameRaw === "") continue;
     let code = String((h.code >= 0 ? row[h.code] : "") ?? "").trim();
-    const rawNameStr = String(nameRaw);
-    const dashMatch = rawNameStr.match(/-+\s*$/);
-    const dashDepth = dashMatch ? dashMatch[0].replace(/\s/g, "").length : 0;
+    if (!code || code === "nan") continue;
+    if (/^\d$/.test(code)) code = "0" + code;
     const name = cleanAccName(nameRaw);
-    const { value, nature } = parseAmountCell(row[h.ending]);
+    const closing = parseAmountCell(row[h.ending]);
+    const opening = h.opening >= 0 ? parseAmountCell(row[h.opening]) : { value: 0, nature: null };
     let netDebit = 0, netCredit = 0;
-    if (h.netDebit >= 0) netDebit = parseFloat(String(row[h.netDebit]).replace(/,/g, "")) || 0;
-    if (h.netCredit >= 0) netCredit = parseFloat(String(row[h.netCredit]).replace(/,/g, "")) || 0;
-    all.push({ code, name, dashDepth, value, nature, netDebit, netCredit });
+    if (h.netDebit >= 0) netDebit = parseSignedNum(row[h.netDebit]);
+    if (h.netCredit >= 0) netCredit = parseSignedNum(row[h.netCredit]);
+    all.push({
+      code, name,
+      closingValue: closing.value, closingNature: closing.nature,
+      openingValue: opening.value, openingNature: opening.nature,
+      netDebit, netCredit,
+    });
   }
-  const hasCode = all.some((a) => a.code);
-  const rows = [];
 
-  if (hasCode) {
-    // صيغة بها كود حساب هرمي بفواصل "/" — المستوى الأخير (بدون أبناء) هو الحساب التفصيلي
-    all.forEach((a) => { if (/^\d$/.test(a.code)) a.code = "0" + a.code; });
-    const nameByCode = {};
-    all.forEach((a) => { if (a.code) nameByCode[a.code] = a.name; });
-    const isLeaf = (code) => !all.some((a) => a.code !== code && a.code.startsWith(code + "/"));
-    all.forEach((a) => {
-      if (!a.value || !a.code) return;
-      if (!isLeaf(a.code)) return;
-      const parts = a.code.split("/");
-      const chain = [];
-      for (let i = parts.length - 1; i >= 1; i--) {
-        const anc = parts.slice(0, i).join("/");
-        if (nameByCode[anc]) chain.push(nameByCode[anc]);
-      }
-      const category = guessCategory(a.name, a.code, chain.join(" "));
-      let debit = 0, credit = 0;
-      if (a.nature === "debit") debit = a.value;
-      else if (a.nature === "credit") credit = a.value;
-      else if (DEBIT_NATURE.has(category)) debit = a.value;
-      else credit = a.value;
-      rows.push({ id: uid(), code: a.code, name: a.name, debit, credit, category });
+  const nameByCode = {};
+  all.forEach((a) => { nameByCode[a.code] = a.name; });
+  const depthOf = (code) => code.split("/").length;
+  const isLeaf = (code) => !all.some((a) => a.code !== code && a.code.startsWith(code + "/"));
+  const parentChain = (code) => {
+    const parts = code.split("/");
+    const chain = [];
+    for (let i = parts.length - 1; i >= 1; i--) {
+      const anc = parts.slice(0, i).join("/");
+      if (nameByCode[anc]) chain.push({ code: anc, name: nameByCode[anc] });
+    }
+    return chain; // من الأقرب للأبعد
+  };
+
+  // الأوراق فقط (التفاصيل النهائية) هي اللي فيها الأرقام الحقيقية — تفادي الازدواج
+  const leaves = [];
+  all.forEach((a) => {
+    if (!isLeaf(a.code)) return;
+    if (!a.closingValue && !a.netDebit && !a.netCredit && !a.openingValue) return;
+    const chain = parentChain(a.code);
+    // نوع الرصيد النهائي: من suffix (م/د) أو من الحركة
+    let nature = a.closingNature;
+    if (!nature) {
+      const netMove = a.netDebit - a.netCredit;
+      const openSigned = a.openingNature === "credit" ? -a.openingValue : a.openingValue;
+      nature = (openSigned + netMove) >= 0 ? "debit" : "credit";
+    }
+    leaves.push({
+      code: a.code, name: a.name, chain,
+      // الحساب الأب المباشر اللي المستخدم هيصنّفه (level chosen elsewhere)
+      closingValue: a.closingValue, nature,
+      opening: a.openingNature === "credit" ? -a.openingValue : a.openingValue,
+      netDebit: a.netDebit, netCredit: a.netCredit,
     });
-  } else {
-    // صيغة بدون كود حساب — عمق التداخل يُقرأ من عدد الشرطات بنهاية اسم الحساب
-    all.forEach((a, i) => {
-      if (!a.value) return;
-      const nextDepth = i + 1 < all.length ? all[i + 1].dashDepth : -1;
-      if (nextDepth > a.dashDepth) return; // له أبناء لاحقين = صف تجميعي، تجاهله
-      const ancestors = [];
-      let minDepth = a.dashDepth;
-      for (let j = i - 1; j >= 0; j--) {
-        if (all[j].dashDepth < minDepth) { ancestors.push(all[j].name); minDepth = all[j].dashDepth; if (minDepth === 0) break; }
-      }
-      const category = guessCategory(a.name, "", ancestors.join(" "));
-      let debit = 0, credit = 0;
-      if (a.nature === "debit") debit = a.value;
-      else if (a.nature === "credit") credit = a.value;
-      else if (DEBIT_NATURE.has(category)) debit = a.value;
-      else credit = a.value;
-      rows.push({ id: uid(), code: `#${i}`, name: a.name, debit, credit, category });
-    });
-  }
+  });
+
+  // قائمة الحسابات "الأب" القابلة للتصنيف (كل المستويات ماعدا الأوراق)، مع رصيدها المجمّع من الأوراق
+  const parentCodes = [...new Set(all.map((a) => a.code).filter((c) => !isLeaf(c)))];
+  const parents = parentCodes.map((code) => {
+    const kids = leaves.filter((l) => l.code.startsWith(code + "/"));
+    const debitSum = kids.filter((k) => k.nature === "debit").reduce((s, k) => s + k.closingValue, 0);
+    const creditSum = kids.filter((k) => k.nature === "credit").reduce((s, k) => s + k.closingValue, 0);
+    return {
+      code, name: nameByCode[code], depth: depthOf(code),
+      leafCount: kids.length, debitSum, creditSum,
+      chain: parentChain(code),
+    };
+  }).filter((p) => p.leafCount > 0);
+
+  return { leaves, parents, nameByCode };
+}
+
+// حوّل الأوراق + تصنيفات الآباء إلى صفوف القوائم النهائية (تجميع أرصدة الأوراق تحت كل أب)
+function leavesToRows(parsed, classMap) {
+  // classMap: { code(parent) -> category }.  كل ورقة تاخد تصنيف أقرب أب مصنّف.
+  const rows = [];
+  parsed.leaves.forEach((leaf) => {
+    // دور على أقرب أب في السلسلة له تصنيف
+    let category = null, parentName = leaf.name;
+    for (const anc of leaf.chain) {
+      if (classMap[anc.code]) { category = classMap[anc.code]; parentName = anc.name; break; }
+    }
+    if (!category) category = guessCategory(leaf.name, leaf.code, leaf.chain.map((c) => c.name).join(" "));
+
+    // فصل العملاء/الموردين حسب طبيعة الرصيد
+    let cat = category;
+    const isCustomer = /عملاء|عميل/.test(leaf.name) || leaf.chain.some((c) => /عملاء/.test(c.name));
+    const isSupplier = /موردين|مورد/.test(leaf.name) || leaf.chain.some((c) => /موردين/.test(c.name));
+    if (isCustomer) cat = leaf.nature === "debit" ? "asset_current" : "liability_current"; // مدين=مستحق لنا، دائن=دفعة مقدمة منه
+    else if (isSupplier) cat = leaf.nature === "credit" ? "liability_current" : "asset_current"; // دائن=مستحق عليه، مدين=دفعة مقدمة له
+
+    let debit = 0, credit = 0;
+    if (leaf.nature === "debit") debit = leaf.closingValue; else credit = leaf.closingValue;
+    rows.push({ id: uid(), code: leaf.code, name: leaf.name, debit, credit, category: cat,
+      isCustomer, isSupplier, parentName });
+  });
   return rows;
 }
 
@@ -317,7 +364,10 @@ async function parseWorkbook(file) {
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: "" });
   const tree = detectTreeColumns(rawRows);
-  if (tree) return { mode: "tree", rawRows, tree, rows: buildTreeRows(rawRows, tree) };
+  if (tree) {
+    const parsed = buildTreeRows(rawRows, tree);
+    return { mode: "tree", rawRows, tree, parsed };
+  }
   const mapping = detectFlatColumns(rawRows) || { headerRow: 0, code: 0, name: 1, debit: 2, credit: 3 };
   return { mode: "flat", rawRows, mapping };
 }
@@ -539,9 +589,9 @@ function UploadZone({ title, onFile, onFiles, fileName }) {
   );
 }
 
-function TreeConfirm({ rows, onConfirm, onFallback }) {
-  const totalDebit = rows.reduce((s, r) => s + r.debit, 0);
-  const totalCredit = rows.reduce((s, r) => s + r.credit, 0);
+function TreeConfirm({ parsed, onConfirm, onFallback }) {
+  let totalDebit = 0, totalCredit = 0;
+  parsed.leaves.forEach((l) => { if (l.nature === "debit") totalDebit += l.closingValue; else totalCredit += l.closingValue; });
   const diff = totalDebit - totalCredit;
   return (
     <Card style={{ padding: 24, marginTop: 18 }}>
@@ -550,7 +600,7 @@ function TreeConfirm({ rows, onConfirm, onFallback }) {
         <div style={{ fontFamily: "'Markazi Text', serif", fontSize: 20, color: INK }}>تم التعرف على ميزان شجري تلقائياً</div>
       </div>
       <p style={{ fontSize: 13, color: "#6b6455", marginBottom: 14 }}>
-        تم استخراج {rows.length} حساب تفصيلي (المستوى الأخير في الشجرة) بأرصدة نهاية الفترة، مع تخمين تصنيف كل حساب حسب مساره داخل شجرة الحسابات.
+        تم استخراج {parsed.leaves.length} حساب تفصيلي (الأوراق) موزّعة تحت {parsed.parents.length} حساب رئيسي. في الخطوة الجاية هتصنّف الحسابات الرئيسية فقط، والباقي يتظبط تلقائيًا.
       </p>
       <div style={{ display: "flex", gap: 14, marginBottom: 16, flexWrap: "wrap" }}>
         <div style={{ padding: "8px 14px", borderRadius: 8, background: Math.abs(diff) < 1 ? "#eaf3ec" : "#faeceb", color: Math.abs(diff) < 1 ? GREEN_INK : RED_INK, fontSize: 13, fontWeight: 600 }}>
@@ -605,6 +655,120 @@ function MappingConfirm({ rawRows, mapping, setMapping, onConfirm }) {
 }
 
 /* ---------------------------------- تصنيف الحسابات ---------------------------------- */
+
+function ParentClassify({ parsed, classMap, setClassMap, savedMap, onNext, nextLabel }) {
+  const [maxLevel, setMaxLevel] = useState(3);
+  const [filter, setFilter] = useState("");
+
+  // الآباء لغاية المستوى المختار، ونتأكد إن كل ورقة مغطّاة بأب مصنَّف على الأقل
+  const parents = parsed.parents.filter((p) => p.depth <= maxLevel);
+  // رتّب حسب الكود
+  parents.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
+
+  // هل الحساب جديد (مش موجود في المحفوظ)؟
+  const isNew = (code, name) => savedMap[`code:${code}`] === undefined && savedMap[`name:${name}`] === undefined;
+
+  const setCat = (code, name, v) => {
+    setClassMap({ ...classMap, [code]: v });
+  };
+
+  const visible = parents.filter((p) => !filter || p.name.includes(filter) || p.code.includes(filter));
+  const newOnes = visible.filter((p) => isNew(p.code, p.name) && !classMap[p.code]);
+  const unclassified = visible.filter((p) => !classMap[p.code] && !isNew(p.code, p.name));
+  const classified = visible.filter((p) => classMap[p.code]);
+
+  const catLabel = (v) => { const o = ALL_CATS.find((x) => x.v === v); return o ? o.label : v; };
+
+  const Row = ({ p, isNewFlag }) => (
+    <tr style={{ borderBottom: `1px solid ${RULE}`, background: isNewFlag ? "#fdf6e9" : "transparent" }}>
+      <td style={{ padding: "8px 10px", fontSize: 11, color: "#8a8271", whiteSpace: "nowrap" }}>{p.code}</td>
+      <td style={{ padding: "8px 10px" }}>
+        <div style={{ fontWeight: 600, fontSize: 13 }}>{p.name} {isNewFlag && <span style={{ fontSize: 9, background: GOLD, color: "#fff", borderRadius: 8, padding: "1px 6px", marginRight: 4 }}>جديد</span>}</div>
+        <div style={{ fontSize: 10.5, color: "#8a8271" }}>
+          {p.leafCount} حساب فرعي · مدين {fmt(p.debitSum)} · دائن {fmt(p.creditSum)}
+        </div>
+      </td>
+      <td style={{ padding: "8px 10px", minWidth: 160 }}>
+        <Select value={classMap[p.code] || ""} onChange={(e) => setCat(p.code, p.name, e.target.value)} style={{ width: "100%", fontSize: 12 }}>
+          <option value="">— اختر التصنيف —</option>
+          {CATEGORY_GROUPS.map((g) => (
+            <optgroup key={g.group} label={g.group}>
+              {g.options.map((o) => (<option key={o.v} value={o.v}>{o.label}</option>))}
+            </optgroup>
+          ))}
+        </Select>
+      </td>
+    </tr>
+  );
+
+  const total = visible.length;
+  const doneCount = classified.length;
+
+  return (
+    <div>
+      <Card style={{ padding: 14, marginBottom: 12 }}>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span style={{ fontSize: 12, color: "#6b6455" }}>اعرض لحد مستوى:</span>
+            {[2, 3, 4].map((lv) => (
+              <button key={lv} onClick={() => setMaxLevel(lv)} style={{ border: `1.5px solid ${maxLevel === lv ? INK : RULE}`, background: maxLevel === lv ? INK : "#fff", color: maxLevel === lv ? CREAM : INK, borderRadius: 7, padding: "5px 12px", fontSize: 12, cursor: "pointer", fontFamily: "'IBM Plex Sans Arabic', sans-serif" }}>
+                {lv === 2 ? "عام" : lv === 3 ? "متوسط" : "تفصيلي"}
+              </button>
+            ))}
+          </div>
+          <div style={{ fontSize: 12, color: doneCount === total ? GREEN_INK : GOLD, fontWeight: 600 }}>
+            صُنّف {doneCount} من {total}
+          </div>
+        </div>
+        <p style={{ fontSize: 11, color: "#8a8271", marginTop: 8 }}>
+          صنّف الحسابات الأب فقط — الحسابات الفرعية تحتها تاخد نفس التصنيف تلقائيًا. العملاء والموردون يتفصلوا تلقائيًا (مدين=مستحق لنا، دائن=دفعة مقدمة). التصنيف بيتحفظ ويُطبَّق على أي شركة تانية.
+        </p>
+      </Card>
+
+      <input placeholder="بحث باسم أو كود…" value={filter} onChange={(e) => setFilter(e.target.value)}
+        style={{ width: "100%", border: `1px solid ${RULE}`, borderRadius: 8, padding: "9px 12px", fontFamily: "'IBM Plex Sans Arabic', sans-serif", fontSize: 13.5, marginBottom: 12 }} />
+
+      {newOnes.length > 0 && (
+        <Card style={{ overflow: "hidden", marginBottom: 12, borderColor: GOLD }}>
+          <div style={{ background: GOLD, color: "#fff", padding: "8px 12px", fontWeight: 700, fontSize: 13 }}>
+            ⚠ حسابات جديدة محتاجة تصنيف ({newOnes.length})
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}><tbody>
+            {newOnes.map((p) => <Row key={p.code} p={p} isNewFlag />)}
+          </tbody></table>
+        </Card>
+      )}
+
+      {unclassified.length > 0 && (
+        <Card style={{ overflow: "hidden", marginBottom: 12 }}>
+          <div style={{ background: "#f4efe2", color: INK, padding: "8px 12px", fontWeight: 700, fontSize: 13 }}>
+            حسابات في انتظار التصنيف ({unclassified.length})
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}><tbody>
+            {unclassified.map((p) => <Row key={p.code} p={p} />)}
+          </tbody></table>
+        </Card>
+      )}
+
+      {classified.length > 0 && (
+        <Card style={{ overflow: "hidden", marginBottom: 12 }}>
+          <div style={{ background: INK, color: CREAM, padding: "8px 12px", fontWeight: 700, fontSize: 13 }}>
+            ✓ حسابات مصنّفة ({classified.length})
+          </div>
+          <div style={{ maxHeight: 320, overflowY: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}><tbody>
+              {classified.map((p) => <Row key={p.code} p={p} />)}
+            </tbody></table>
+          </div>
+        </Card>
+      )}
+
+      <div style={{ position: "sticky", bottom: 10, marginTop: 14, zIndex: 5 }}>
+        <PrimaryBtn icon={Check} onClick={onNext}>{nextLabel || "حفظ والمتابعة"}</PrimaryBtn>
+      </div>
+    </div>
+  );
+}
 
 function ClassifyTable({ rows, setRows, onNext, nextLabel }) {
   const [filter, setFilter] = useState("");
@@ -1308,8 +1472,8 @@ function computeZakatTotal(zakatData) {
 
 function ZakatModule({ data, setData, readOnly }) {
   const [file, setFile] = useState(null);
-  const [parsed, setParsed] = useState(null);
-  const [pendingRows, setPendingRows] = useState(null);
+  const [parsedTree, setParsedTree] = useState(null);
+  const [rawFlat, setRawFlat] = useState(null);
   const [mode, setMode] = useState(null);
   const [mapping, setMapping] = useState(null);
   const [zDraftRows, setZDraftRows] = useState(null);
@@ -1320,10 +1484,14 @@ function ZakatModule({ data, setData, readOnly }) {
   const onFile = async (fl) => {
     setFile(fl.name);
     const res = await parseWorkbook(fl);
-    setParsed(res.rawRows);
     setMode(res.mode);
-    if (res.mode === "tree") setPendingRows(res.rows);
-    else setMapping(res.mapping);
+    if (res.mode === "tree") setParsedTree(res.parsed);
+    else { setRawFlat(res.rawRows); setMapping(res.mapping); }
+  };
+  const buildZakatRows = () => {
+    if (mode === "tree" && parsedTree) return leavesToRows(parsedTree, {});
+    if (mode === "flat" && rawFlat) return buildFlatRows(rawFlat, mapping);
+    return [];
   };
   const saveZakatDraft = () => { setData({ rows: zDraftRows, items: null }); setZDraftRows(null); };
 
@@ -1402,11 +1570,11 @@ function ZakatModule({ data, setData, readOnly }) {
       {!rows && !zDraftRows && !readOnly && (
         <>
           <UploadZone title="رفع ميزان مراجعة بداية الحول" onFile={onFile} fileName={file} />
-          {mode === "tree" && pendingRows && (
-            <TreeConfirm rows={pendingRows} onConfirm={() => setZDraftRows(pendingRows)} onFallback={() => { setMode("flat"); setMapping(detectFlatColumns(parsed) || { headerRow: 0, code: 0, name: 1, debit: 2, credit: 3 }); }} />
+          {mode === "tree" && parsedTree && (
+            <TreeConfirm parsed={parsedTree} onConfirm={() => setZDraftRows(buildZakatRows())} onFallback={() => { setMode("flat"); setMapping(detectFlatColumns(rawFlat) || { headerRow: 0, code: 0, name: 1, debit: 2, credit: 3 }); }} />
           )}
-          {mode === "flat" && parsed && mapping && (
-            <MappingConfirm rawRows={parsed} mapping={mapping} setMapping={setMapping} onConfirm={() => setZDraftRows(buildFlatRows(parsed, mapping))} />
+          {mode === "flat" && rawFlat && mapping && (
+            <MappingConfirm rawRows={rawFlat} mapping={mapping} setMapping={setMapping} onConfirm={() => setZDraftRows(buildFlatRows(rawFlat, mapping))} />
           )}
         </>
       )}
@@ -1604,18 +1772,43 @@ function MainApp({ user }) {
   const [stmtTab, setStmtTab] = useState("home");
 
   const [file, setFile] = useState(null);
-  const [parsed, setParsed] = useState(null);
+  const [parsedTree, setParsedTree] = useState(null);
   const [pendingRows, setPendingRows] = useState(null);
   const [mode, setMode] = useState(null);
   const [mapping, setMapping] = useState(null);
+  const [rawRowsFlat, setRawRowsFlat] = useState(null);
 
-  const [draftRows, setDraftRows] = useState(null);
+  const [draftParsed, setDraftParsed] = useState(null); // {leaves, parents, nameByCode}
+  const [draftClassMap, setDraftClassMap] = useState({}); // parentCode -> category
+  const [draftRows, setDraftRows] = useState(null); // flat mode fallback
   const [draftIsNew, setDraftIsNew] = useState(true);
   const [draftPeriodId, setDraftPeriodId] = useState(null);
   const [draftYear, setDraftYear] = useState(new Date().getFullYear());
   const [draftMonth, setDraftMonth] = useState(new Date().getMonth() + 1);
   const [draftOpeningInv, setDraftOpeningInv] = useState(0);
   const [draftCumulative, setDraftCumulative] = useState(true);
+
+  // خريطة التصنيف المحفوظة عالميًا (مشتركة لكل الشركات) — code:XXX / name:YYY -> category
+  const [savedClass, setSavedClass] = useState({});
+  useEffect(() => {
+    const ref = db.collection("settings").doc(`classmap_${user.uid}`);
+    const unsub = ref.onSnapshot((snap) => {
+      if (snap.exists) setSavedClass(snap.data().map || {});
+    }, () => {});
+    return unsub;
+  }, [user.uid]);
+  const persistClassifications = (classMap, parsed) => {
+    // خزّن التصنيف بالكود وبالاسم (عشان لو الكود اتغير يفتكر بالاسم)
+    const add = {};
+    Object.entries(classMap).forEach(([code, cat]) => {
+      if (!cat) return;
+      add[`code:${code}`] = cat;
+      const nm = parsed.nameByCode[code];
+      if (nm) add[`name:${nm}`] = cat;
+    });
+    const merged = { ...savedClass, ...add };
+    db.collection("settings").doc(`classmap_${user.uid}`).set({ map: merged }, { merge: true }).catch(() => {});
+  };
 
   const [activePeriodId, setActivePeriodId] = useState(null);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
@@ -1710,36 +1903,47 @@ function MainApp({ user }) {
     db.collection("companies").doc(companyId).update({ [field]: firebase.firestore.FieldValue.arrayRemove(email) });
   };
 
-  const resetUploadState = () => { setFile(null); setParsed(null); setPendingRows(null); setMode(null); setMapping(null); };
+  const resetUploadState = () => { setFile(null); setParsedTree(null); setPendingRows(null); setMode(null); setMapping(null); setRawRowsFlat(null); };
+
+  // ابنِ classMap مبدئية من التصنيفات المحفوظة (بالكود ثم بالاسم)
+  const seedClassMap = (parsed) => {
+    const cm = {};
+    parsed.parents.forEach((p) => {
+      const byCode = savedClass[`code:${p.code}`];
+      const byName = savedClass[`name:${p.name}`];
+      const guess = guessCategory(p.name, p.code, p.chain.map((c) => c.name).join(" "));
+      if (byCode) cm[p.code] = byCode;
+      else if (byName) cm[p.code] = byName;
+      // نترك الباقي فاضي عشان المستخدم يحدده (أو التخمين وقت التحويل)
+    });
+    return cm;
+  };
 
   const onFile = async (f) => {
     setFile(f.name);
     const res = await parseWorkbook(f);
-    setParsed(res.rawRows);
     setMode(res.mode);
-    if (res.mode === "tree") setPendingRows(res.rows);
-    else setMapping(res.mapping);
+    if (res.mode === "tree") { setParsedTree(res.parsed); setPendingRows(res.parsed); }
+    else { setRawRowsFlat(res.rawRows); setMapping(res.mapping); }
   };
 
   const [batchBusy, setBatchBusy] = useState(false);
   const onFiles = async (files) => {
     setBatchBusy(true);
     try {
-      // رتّب الملفات أبجديًا حسب الاسم (عادة بتبقى مرقّمة بالشهور)
       const sorted = [...files].sort((a, b) => a.name.localeCompare(b.name, "ar", { numeric: true }));
-      let baseMonth, baseYear, openInv;
+      let baseMonth, baseYear;
       if (sortedPeriods.length) {
         const last = sortedPeriods[sortedPeriods.length - 1];
         baseMonth = last.month === 12 ? 1 : last.month + 1;
         baseYear = last.month === 12 ? last.year + 1 : last.year;
-      } else {
-        const now = new Date();
-        baseMonth = 1; baseYear = now.getFullYear();
-      }
+      } else { baseMonth = 1; baseYear = new Date().getFullYear(); }
       const newPeriods = [];
       for (let i = 0; i < sorted.length; i++) {
         const res = await parseWorkbook(sorted[i]);
-        const rows = res.mode === "tree" ? res.rows : buildFlatRows(res.rawRows, res.mapping);
+        let rows;
+        if (res.mode === "tree") { rows = leavesToRows(res.parsed, seedClassMap(res.parsed)); }
+        else rows = buildFlatRows(res.rawRows, res.mapping);
         let m = baseMonth + i, y = baseYear;
         while (m > 12) { m -= 12; y += 1; }
         newPeriods.push({ id: uid(), year: y, month: m, rows, openingInventory: 0, cumulative: true, uploadedAt: Date.now(), fileName: sorted[i].name });
@@ -1748,40 +1952,49 @@ function MainApp({ user }) {
       patchCompany({ periods: [...others, ...newPeriods] });
       const firstNew = newPeriods[0];
       if (firstNew) { setActivePeriodId(firstNew.id); setSelectedYear(firstNew.year); }
-      setStep("statements");
-      setStmtTab("home");
-      alert(`تم رفع ${newPeriods.length} ميزان بنجاح وتوزيعهم على الشهور تلقائيًا. راجع تصنيف الحسابات لكل شهر من تاب «رفع فترة» ← تعديل، وصحّح أي تصنيف أو تاريخ لو لزم.`);
-    } catch (e) {
-      alert("حصل خطأ أثناء رفع الملفات: " + e.message);
-    }
+      setStep("statements"); setStmtTab("home");
+      alert(`تم رفع ${newPeriods.length} ميزان وتوزيعهم على الشهور تلقائيًا حسب التصنيفات المحفوظة. راجع أي شهر من «رفع فترة» ← تعديل لو احتجت.`);
+    } catch (e) { alert("حصل خطأ أثناء رفع الملفات: " + e.message); }
     setBatchBusy(false);
   };
 
-  const beginDraft = (rows) => {
-    setDraftRows(rows);
+  const setDraftDates = () => {
+    if (sortedPeriods.length) {
+      const last = sortedPeriods[sortedPeriods.length - 1];
+      const m = last.month === 12 ? 1 : last.month + 1;
+      const y = last.month === 12 ? last.year + 1 : last.year;
+      const firstOfYear = sortedPeriods.find((p) => p.year === y);
+      setDraftOpeningInv(firstOfYear ? (firstOfYear.openingInventory || 0) : (last.month === 12 ? round2(computeFigures(last.rows, 0).closingInventory) : (last.openingInventory || 0)));
+      setDraftYear(y); setDraftMonth(m);
+    } else {
+      const now = new Date();
+      setDraftOpeningInv(0); setDraftYear(now.getFullYear()); setDraftMonth(now.getMonth() + 1);
+    }
+  };
+
+  const confirmTree = () => {
+    setDraftParsed(parsedTree);
+    setDraftClassMap(seedClassMap(parsedTree));
+    setDraftRows(null);
     setDraftIsNew(true);
     setDraftPeriodId(uid());
     setDraftCumulative(true);
-    const now = new Date();
-    let y = now.getFullYear(), m = now.getMonth() + 1;
-    // اقترح الشهر التالي لآخر فترة محفوظة
-    if (sortedPeriods.length) {
-      const last = sortedPeriods[sortedPeriods.length - 1];
-      m = last.month === 12 ? 1 : last.month + 1;
-      y = last.month === 12 ? last.year + 1 : last.year;
-      const firstOfYear = sortedPeriods.find((p) => p.year === (last.month === 12 ? last.year + 1 : last.year));
-      setDraftOpeningInv(firstOfYear ? (firstOfYear.openingInventory || 0) : (last.month === 12 ? round2(computeFigures(last.rows, 0).closingInventory) : (last.openingInventory || 0)));
-    } else {
-      setDraftOpeningInv(0);
-    }
-    setDraftYear(y);
-    setDraftMonth(m);
+    setDraftDates();
     setStep("classify");
   };
-  const confirmTree = () => beginDraft(pendingRows);
-  const confirmFlat = () => beginDraft(buildFlatRows(parsed, mapping));
+  const confirmFlat = () => {
+    setDraftParsed(null);
+    setDraftRows(buildFlatRows(rawRowsFlat, mapping));
+    setDraftIsNew(true);
+    setDraftPeriodId(uid());
+    setDraftCumulative(true);
+    setDraftDates();
+    setStep("classify");
+  };
 
   const startEditPeriod = (p) => {
+    // التعديل يشتغل على الصفوف النهائية المحفوظة (flat) عبر ClassifyTable
+    setDraftParsed(null);
     setDraftRows(p.rows);
     setDraftIsNew(false);
     setDraftPeriodId(p.id);
@@ -1793,11 +2006,18 @@ function MainApp({ user }) {
   };
 
   const finalizeDraft = () => {
-    const periodObj = { id: draftPeriodId, year: draftYear, month: draftMonth, rows: draftRows, openingInventory: draftOpeningInv, cumulative: draftCumulative, uploadedAt: Date.now() };
+    let rows;
+    if (draftParsed) {
+      rows = leavesToRows(draftParsed, draftClassMap);
+      persistClassifications(draftClassMap, draftParsed);
+    } else {
+      rows = draftRows;
+    }
+    const periodObj = { id: draftPeriodId, year: draftYear, month: draftMonth, rows, openingInventory: draftOpeningInv, cumulative: draftCumulative, uploadedAt: Date.now() };
     savePeriod(periodObj);
     setActivePeriodId(draftPeriodId);
     setSelectedYear(draftYear);
-    setDraftRows(null);
+    setDraftParsed(null); setDraftRows(null); setDraftClassMap({});
     setStep("statements");
     setStmtTab("income_monthly");
     resetUploadState();
@@ -1918,11 +2138,11 @@ function MainApp({ user }) {
             <SectionTitle icon={Upload} sub="ارفع ميزان شهر واحد، أو عدة ملفات دفعة واحدة (كل ملف = شهر) وسيوزّعها التطبيق تلقائيًا">رفع فترة جديدة</SectionTitle>
             {batchBusy && <Card style={{ padding: 16, marginBottom: 12, textAlign: "center", color: GOLD, fontWeight: 600 }}>جارِ رفع ومعالجة الملفات…</Card>}
             <UploadZone title="رفع ميزان مراجعة" onFile={onFile} onFiles={onFiles} fileName={file} />
-            {mode === "tree" && pendingRows && (
-              <TreeConfirm rows={pendingRows} onConfirm={confirmTree} onFallback={() => { setMode("flat"); setMapping(detectFlatColumns(parsed) || { headerRow: 0, code: 0, name: 1, debit: 2, credit: 3 }); }} />
+            {mode === "tree" && parsedTree && (
+              <TreeConfirm parsed={parsedTree} onConfirm={confirmTree} onFallback={() => { setMode("flat"); setMapping(detectFlatColumns(rawRowsFlat) || { headerRow: 0, code: 0, name: 1, debit: 2, credit: 3 }); }} />
             )}
-            {mode === "flat" && parsed && mapping && (
-              <MappingConfirm rawRows={parsed} mapping={mapping} setMapping={setMapping} onConfirm={confirmFlat} />
+            {mode === "flat" && rawRowsFlat && mapping && (
+              <MappingConfirm rawRows={rawRowsFlat} mapping={mapping} setMapping={setMapping} onConfirm={confirmFlat} />
             )}
             {sortedPeriods.length > 0 && (
               <div style={{ marginTop: 24 }}>
@@ -1955,14 +2175,18 @@ function MainApp({ user }) {
           <Card style={{ padding: 30, textAlign: "center", color: "#847c69" }}>لا توجد بيانات مرفوعة لهذه الشركة بعد، وصلاحيتك هنا مشاهدة فقط.</Card>
         )}
 
-        {step === "classify" && draftRows && (
+        {step === "classify" && (draftParsed || draftRows) && (
           <div>
-            <SectionTitle icon={ClipboardList} sub="راجع التصنيف المقترح لكل حساب وعدّله إذا لزم الأمر">تصنيف الحسابات</SectionTitle>
+            <SectionTitle icon={ClipboardList} sub={draftParsed ? "صنّف الحسابات الرئيسية فقط — الباقي يتظبط تلقائيًا" : "راجع التصنيف المقترح لكل حساب وعدّله إذا لزم الأمر"}>تصنيف الحسابات</SectionTitle>
             <SavePeriodBar year={draftYear} setYear={setDraftYear} month={draftMonth} setMonth={setDraftMonth} openingInv={draftOpeningInv} setOpeningInv={setDraftOpeningInv} cumulative={draftCumulative} setCumulative={setDraftCumulative} onSave={finalizeDraft} isNew={draftIsNew} />
-            <ClassifyTable rows={draftRows} setRows={setDraftRows} onNext={finalizeDraft} nextLabel={draftIsNew ? "حفظ الفترة والانتقال للقوائم" : "حفظ التعديلات"} />
+            {draftParsed ? (
+              <ParentClassify parsed={draftParsed} classMap={draftClassMap} setClassMap={setDraftClassMap} savedMap={savedClass} onNext={finalizeDraft} nextLabel={draftIsNew ? "حفظ الفترة والانتقال للقوائم" : "حفظ التعديلات"} />
+            ) : (
+              <ClassifyTable rows={draftRows} setRows={setDraftRows} onNext={finalizeDraft} nextLabel={draftIsNew ? "حفظ الفترة والانتقال للقوائم" : "حفظ التعديلات"} />
+            )}
           </div>
         )}
-        {step === "classify" && !draftRows && (
+        {step === "classify" && !draftParsed && !draftRows && (
           <Card style={{ padding: 30, textAlign: "center", color: "#847c69" }}>اختر فترة من القائمة فوق أو ارفع فترة جديدة أولاً.</Card>
         )}
 
