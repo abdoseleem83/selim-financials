@@ -2588,6 +2588,14 @@ function computeZakatTotal(zakatData) {
   }, 0);
 }
 
+// كلمات مرتبطة بكل نوع بند زكوي — تُستخدم لاقتراح حسابات ذات صلة بغض النظر عن تصنيفها الحالي في الميزان
+const ZAKAT_SUGGEST_RULES = [
+  { test: /نقد|خزائن|خزين|كاش|بنك/, rx: /نقد|بنك|صندوق|صناديق|خزين|خزائن|خزنة|خزينه|عهد|كاش|محفظ/ },
+  { test: /مخزون|بضاعة|بضائع/, rx: /مخزون|بضاعة|بضائع/ },
+  { test: /عميل|عملاء/, rx: /عملاء|عميل/ },
+  { test: /مورد|موردين/, rx: /موردين|مورد/ },
+];
+
 function ZakatModule({ data, setData, readOnly, savedClass, companyName }) {
   const [file, setFile] = useState(null);
   const [parsedTree, setParsedTree] = useState(null);
@@ -2675,6 +2683,15 @@ function ZakatModule({ data, setData, readOnly, savedClass, companyName }) {
       .sort((a, b) => b.amount - a.amount);
   }, [rows]);
   const [pickForItem, setPickForItem] = useState(null); // تعديل بند موجود بدل إضافة جديد
+  const suggestedAccounts = useMemo(() => {
+    if (!pickForItem) return [];
+    const it = items.find((x) => x.id === pickForItem);
+    if (!it) return [];
+    const rule = ZAKAT_SUGGEST_RULES.find((r) => r.test.test(it.label));
+    if (!rule) return [];
+    const usedNames = (it.sources && it.sources.length ? it.sources : (it.amount ? [{ name: it.label }] : [])).map((s) => s.name);
+    return pickableAccounts.filter((a) => rule.rx.test(a.name) && !usedNames.includes(a.name));
+  }, [pickForItem, items, pickableAccounts]);
   const sumSources = (srcs) => round2((srcs || []).reduce((s, x) => s + (x.amount || 0), 0));
   const addFromAccount = (acc) => {
     if (pickForItem) {
@@ -2699,6 +2716,16 @@ function ZakatModule({ data, setData, readOnly, savedClass, companyName }) {
       return { ...i, sources: srcs, amount: sumSources(srcs) };
     }) });
     setPickSearch("");
+  };
+  const addManyToItem = (id, accounts) => {
+    setData({ items: items.map((i) => {
+      if (i.id !== id) return i;
+      const cur = i.sources && i.sources.length ? i.sources : (i.amount ? [{ name: i.label, amount: i.amount }] : []);
+      const curNames = cur.map((s) => s.name);
+      const additions = accounts.filter((a) => !curNames.includes(a.name)).map((a) => ({ name: a.name, amount: round2(a.amount) }));
+      const srcs = [...cur, ...additions];
+      return { ...i, sources: srcs, amount: sumSources(srcs) };
+    }) });
   };
   const removeSource = (itemId, idx) => {
     setData({ items: items.map((i) => {
@@ -2827,6 +2854,27 @@ function ZakatModule({ data, setData, readOnly, savedClass, companyName }) {
                             إضافة حساب ({remaining.length} متاح)
                           </div>
                         </>
+                      )}
+                      {pickForItem && suggestedAccounts.length > 0 && (
+                        <div style={{ border: `1px solid ${GOLD}`, borderRadius: 8, marginBottom: 10, background: "#fdf6e9" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", borderBottom: `1px solid ${GOLD}` }}>
+                            <span style={{ fontSize: 11.5, fontWeight: 700, color: GOLD }}>🔎 مقترحة تلقائيًا ({suggestedAccounts.length}) — أسماء فيها كلمات مشابهة لهذا البند</span>
+                            <button onClick={() => addManyToItem(pickForItem, suggestedAccounts)}
+                              style={{ background: GOLD, color: "#fff", border: "none", borderRadius: 6, padding: "4px 9px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>
+                              + إضافة الكل
+                            </button>
+                          </div>
+                          <div style={{ maxHeight: 160, overflowY: "auto" }}>
+                            {suggestedAccounts.map((a, i) => (
+                              <button key={i} onClick={() => addToItem(a)}
+                                style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, width: "100%", background: "transparent", border: "none", borderBottom: i < suggestedAccounts.length - 1 ? `1px solid #efe4c8` : "none", padding: "8px 10px", cursor: "pointer", fontFamily: "inherit", textAlign: "right" }}>
+                                <span style={{ fontSize: 12.5, color: INK, flex: 1, minWidth: 0 }}>{a.name}</span>
+                                <span style={{ fontSize: 9.5, color: "#8a8271" }}>{a.nature}</span>
+                                <span style={{ direction: "ltr", fontSize: 12, fontWeight: 700, color: INK, whiteSpace: "nowrap" }}>{fmt(a.amount)}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
                       )}
                       <input autoFocus placeholder="ابحث باسم الحساب…" value={pickSearch} onChange={(e) => setPickSearch(e.target.value)}
                         style={{ width: "100%", border: `1px solid ${RULE}`, borderRadius: 8, padding: "9px 12px", fontFamily: "inherit", fontSize: 13.5, marginBottom: 10 }} />
