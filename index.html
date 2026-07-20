@@ -2828,10 +2828,10 @@ function ZakatModule({ data, setData, readOnly, savedClass, companyName }) {
                     <>
                       {pickForItem && (
                         <>
-                          <div style={{ fontSize: 11.5, color: INK, fontWeight: 700, margin: "6px 0 6px" }}>
+                          <div style={{ fontSize: 11.5, color: INK, fontWeight: 700, margin: "6px 0 6px", flexShrink: 0 }}>
                             الحسابات المضافة ({srcs.length})
                           </div>
-                          <div style={{ border: `1px solid ${RULE}`, borderRadius: 8, marginBottom: 10, maxHeight: 150, overflowY: "auto", background: "#f7faf6" }}>
+                          <div style={{ border: `1px solid ${RULE}`, borderRadius: 8, marginBottom: 10, maxHeight: 150, minHeight: srcs.length ? 60 : undefined, overflowY: "auto", background: "#f7faf6", flexShrink: 0 }}>
                             {srcs.length === 0 && <div style={{ padding: 12, textAlign: "center", color: "#847c69", fontSize: 11.5 }}>لا توجد حسابات مضافة — اختر من القائمة تحت.</div>}
                             {srcs.map((s, k) => (
                               <div key={k} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderBottom: `1px solid ${RULE}` }}>
@@ -2850,13 +2850,13 @@ function ZakatModule({ data, setData, readOnly, savedClass, companyName }) {
                               </div>
                             )}
                           </div>
-                          <div style={{ fontSize: 11.5, color: INK, fontWeight: 700, marginBottom: 6 }}>
+                          <div style={{ fontSize: 11.5, color: INK, fontWeight: 700, marginBottom: 6, flexShrink: 0 }}>
                             إضافة حساب ({remaining.length} متاح)
                           </div>
                         </>
                       )}
                       {pickForItem && suggestedAccounts.length > 0 && (
-                        <div style={{ border: `1px solid ${GOLD}`, borderRadius: 8, marginBottom: 10, background: "#fdf6e9" }}>
+                        <div style={{ border: `1px solid ${GOLD}`, borderRadius: 8, marginBottom: 10, background: "#fdf6e9", flexShrink: 0 }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", borderBottom: `1px solid ${GOLD}` }}>
                             <span style={{ fontSize: 11.5, fontWeight: 700, color: GOLD }}>🔎 مقترحة تلقائيًا ({suggestedAccounts.length}) — أسماء فيها كلمات مشابهة لهذا البند</span>
                             <button onClick={() => addManyToItem(pickForItem, suggestedAccounts)}
@@ -2864,7 +2864,7 @@ function ZakatModule({ data, setData, readOnly, savedClass, companyName }) {
                               + إضافة الكل
                             </button>
                           </div>
-                          <div style={{ maxHeight: 160, overflowY: "auto" }}>
+                          <div style={{ maxHeight: 120, overflowY: "auto" }}>
                             {suggestedAccounts.map((a, i) => (
                               <button key={i} onClick={() => addToItem(a)}
                                 style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, width: "100%", background: "transparent", border: "none", borderBottom: i < suggestedAccounts.length - 1 ? `1px solid #efe4c8` : "none", padding: "8px 10px", cursor: "pointer", fontFamily: "inherit", textAlign: "right" }}>
@@ -2877,8 +2877,8 @@ function ZakatModule({ data, setData, readOnly, savedClass, companyName }) {
                         </div>
                       )}
                       <input autoFocus placeholder="ابحث باسم الحساب…" value={pickSearch} onChange={(e) => setPickSearch(e.target.value)}
-                        style={{ width: "100%", border: `1px solid ${RULE}`, borderRadius: 8, padding: "9px 12px", fontFamily: "inherit", fontSize: 13.5, marginBottom: 10 }} />
-                      <div style={{ overflowY: "auto", flex: 1, border: `1px solid ${RULE}`, borderRadius: 8 }}>
+                        style={{ width: "100%", border: `1px solid ${RULE}`, borderRadius: 8, padding: "9px 12px", fontFamily: "inherit", fontSize: 13.5, marginBottom: 10, flexShrink: 0 }} />
+                      <div style={{ overflowY: "auto", flex: 1, minHeight: 80, border: `1px solid ${RULE}`, borderRadius: 8 }}>
                         {remaining.slice(0, 200).map((a, i) => (
                           <button key={i} onClick={() => (pickForItem ? addToItem(a) : addFromAccount(a))}
                             style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, width: "100%", background: i % 2 ? "#fbf9f4" : "#fff", border: "none", borderBottom: `1px solid ${RULE}`, padding: "9px 10px", cursor: "pointer", fontFamily: "inherit", textAlign: "right" }}>
