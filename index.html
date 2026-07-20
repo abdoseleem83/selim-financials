@@ -105,6 +105,10 @@ const FONTS = `
 .export-wide td:nth-child(5), .export-wide th:nth-child(5) { width: 1% !important; white-space: nowrap !important; min-width: 0 !important; }
 .export-wide .no-print { display: none !important; }
 .export-wide .stmt-watermark { display: none !important; }
+.export-wide .zk-field, .export-land .zk-field { border: none !important; background: transparent !important; padding: 0 !important; -webkit-text-fill-color: #132340 !important; opacity: 1 !important; }
+.export-wide .zk-label, .export-land .zk-label { font-weight: 600 !important; }
+.export-wide .zk-amount, .export-land .zk-amount { font-weight: 700 !important; text-align: left !important; }
+.export-wide .zk-row, .export-land .zk-row { border-bottom: 1px solid #EAE3D0 !important; }
 .export-land { width: 1250px !important; max-width: 1250px !important; }
 .export-land table { width: 100% !important; font-size: 20px !important; table-layout: auto !important; border-collapse: collapse !important; }
 .export-land td, .export-land th { padding: 5px 7px !important; line-height: 1.35 !important; font-weight: 700 !important; white-space: nowrap !important; font-size: 20px !important; }
@@ -486,9 +490,9 @@ function Select({ value, onChange, children, style }) {
   );
 }
 
-function NumInput({ value, onChange, style, disabled }) {
+function NumInput({ value, onChange, style, disabled, className }) {
   return (
-    <input type="number" value={value} onChange={onChange} disabled={disabled} style={{ width: "100%", border: `1px solid ${RULE}`, borderRadius: 7, padding: "7px 10px", fontFamily: "'IBM Plex Sans Arabic', sans-serif", fontSize: 13.5, textAlign: "left", direction: "ltr", color: INK, background: disabled ? "#f3f0e8" : "#fff", ...style }} />
+    <input type="number" value={value} onChange={onChange} disabled={disabled} className={className} style={{ width: "100%", border: `1px solid ${RULE}`, borderRadius: 7, padding: "7px 10px", fontFamily: "'IBM Plex Sans Arabic', sans-serif", fontSize: 13.5, textAlign: "left", direction: "ltr", color: INK, background: disabled ? "#f3f0e8" : "#fff", ...style }} />
   );
 }
 
@@ -2584,7 +2588,7 @@ function computeZakatTotal(zakatData) {
   }, 0);
 }
 
-function ZakatModule({ data, setData, readOnly, savedClass }) {
+function ZakatModule({ data, setData, readOnly, savedClass, companyName }) {
   const [file, setFile] = useState(null);
   const [parsedTree, setParsedTree] = useState(null);
   const [rawFlat, setRawFlat] = useState(null);
@@ -2614,7 +2618,7 @@ function ZakatModule({ data, setData, readOnly, savedClass }) {
       const taxLiab = round2(Math.abs(f.liabilityCurrentRows.filter((r) => /ضريبة/.test(r.name)).reduce((s, r) => s + r.amount, 0)));
       setData({
         items: [
-          { id: uid(), group: "asset", label: "النقدية والخزائن", amount: round2(f.cash) },
+          { id: uid(), group: "asset", label: "النقدية والخزائن", amount: round2(f.cash), sources: (f.balanceGroups.cash.rows || []).map((r) => ({ name: r.name, amount: round2(r.amount) })) },
           { id: uid(), group: "asset", label: "المدينون الآخرون والأمانات", amount: 0 },
           { id: uid(), group: "asset", label: "ذمم العملاء المدينة (المرجوة)", amount: round2(Math.abs(f.customerDebt)) },
           { id: uid(), group: "asset", label: "دفعات مقدمة للموردين", amount: round2(Math.abs(f.supplierPrepaid)) },
@@ -2706,30 +2710,34 @@ function ZakatModule({ data, setData, readOnly, savedClass }) {
 
   const ItemsGroup = ({ title, list, group }) => (
     <div style={{ marginBottom: 20 }}>
-      <div style={{ fontWeight: 700, color: GOLD, marginBottom: 8, fontSize: 13.5 }}>{title}</div>
-      {list.map((it) => (
-        <div key={it.id} style={{ border: `1px solid ${RULE}`, borderRadius: 9, padding: 10, marginBottom: 8, background: "#fff" }}>
-          <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
-            <input value={it.label} disabled={readOnly} onChange={(e) => updateItem(it.id, { label: e.target.value })}
-              style={{ flex: 1, minWidth: 0, border: "none", fontFamily: "'IBM Plex Sans Arabic', sans-serif", fontSize: 13, fontWeight: 600, color: INK, background: "transparent", outline: "none" }} />
-            {!readOnly && (
-              <button onClick={() => { setPickFor(group); setPickForItem(it.id); setPickSearch(""); }} title="اختر الحساب من الميزان"
-                style={{ background: "#fdf6e9", border: `1px solid ${GOLD}`, borderRadius: 7, cursor: "pointer", color: GOLD, flexShrink: 0, padding: "4px 8px", display: "flex", alignItems: "center", gap: 4, fontSize: 11, fontFamily: "'IBM Plex Sans Arabic', sans-serif", fontWeight: 700 }}>
-                <Pencil size={12} /> اختيار
-              </button>
-            )}
-            {!readOnly && <button onClick={() => removeItem(it.id)} style={{ background: "none", border: "none", cursor: "pointer", color: RED_INK, flexShrink: 0 }}><Trash2 size={14} /></button>}
-          </div>
-          <NumInput value={it.amount} disabled={readOnly} onChange={(e) => updateItem(it.id, { amount: parseFloat(e.target.value) || 0, sources: null })} style={{ width: "100%" }} />
-          {it.sources && it.sources.length > 0 && (
-            <div style={{ fontSize: 10.5, color: GREEN_INK, marginTop: 5, display: "flex", alignItems: "center", gap: 4 }}>
-              ✔ مجمّع من {it.sources.length} {it.sources.length === 1 ? "حساب" : "حسابات"} من الميزان
+      <div style={{ fontWeight: 700, color: GOLD, marginBottom: 6, fontSize: 13.5 }}>{title}</div>
+      <div>
+        {list.map((it) => (
+          <div key={it.id} className="zk-row" style={{ padding: "8px 2px" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input value={it.label} disabled={readOnly} onChange={(e) => updateItem(it.id, { label: e.target.value })}
+                className="zk-field zk-label"
+                style={{ flex: 1, minWidth: 0, border: "none", fontFamily: "'IBM Plex Sans Arabic', sans-serif", fontSize: 13.5, fontWeight: 600, color: INK, background: "transparent", outline: "none", padding: 0 }} />
+              {!readOnly && (
+                <button className="no-print" onClick={() => { setPickFor(group); setPickForItem(it.id); setPickSearch(""); }} title="اختر الحساب من الميزان"
+                  style={{ background: "#fdf6e9", border: `1px solid ${GOLD}`, borderRadius: 7, cursor: "pointer", color: GOLD, flexShrink: 0, padding: "4px 7px", display: "flex", alignItems: "center", gap: 3, fontSize: 10.5, fontFamily: "'IBM Plex Sans Arabic', sans-serif", fontWeight: 700 }}>
+                  <Pencil size={11} /> اختيار
+                </button>
+              )}
+              {!readOnly && <button className="no-print" onClick={() => removeItem(it.id)} style={{ background: "none", border: "none", cursor: "pointer", color: RED_INK, flexShrink: 0, padding: 0 }}><Trash2 size={13} /></button>}
+              <NumInput value={it.amount} disabled={readOnly} onChange={(e) => updateItem(it.id, { amount: parseFloat(e.target.value) || 0, sources: null })}
+                className="zk-field zk-amount" style={{ width: 140, flexShrink: 0, border: readOnly ? "none" : `1px solid ${RULE}`, background: readOnly ? "transparent" : "#fff", fontSize: 13.5 }} />
             </div>
-          )}
-        </div>
-      ))}
+            {it.sources && it.sources.length > 0 && (
+              <div className="no-print" style={{ fontSize: 10.5, color: GREEN_INK, marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
+                ✔ مجمّع من {it.sources.length} {it.sources.length === 1 ? "حساب" : "حسابات"} من الميزان
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
       {!readOnly && (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }} className="no-print">
           <GhostBtn icon={Plus} onClick={() => { setPickFor(group); setPickSearch(""); }}>اختيار بند من الميزان</GhostBtn>
           <GhostBtn icon={Plus} onClick={() => addItem(group)}>بند يدوي</GhostBtn>
         </div>
@@ -2866,15 +2874,24 @@ function ZakatModule({ data, setData, readOnly, savedClass }) {
           <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 10 }} className="no-print">
             <GhostBtn icon={ScrollText} onClick={async () => {
               try {
-                const payload = await exportStatementPdf({ targetId: "print-zakat", fileName: "حساب الزكاة", companyName: "", title: "حساب الزكاة" });
+                const payload = await exportStatementPdf({ targetId: "print-zakat", fileName: "حساب الزكاة", companyName: companyName || "", title: `${companyName ? companyName + " — " : ""}حساب الزكاة` });
                 if (payload) setZakatPdf(payload);
               } catch (e) { alert("تعذّر تصدير PDF: " + e.message); }
             }}>تصدير PDF</GhostBtn>
           </div>
-          <div id="print-zakat" className="print-area">
+          <div id="print-zakat" className="print-area" style={{ position: "relative" }}>
+          <div className="stmt-watermark" />
+          <div style={{ textAlign: "center", marginBottom: 18, borderBottom: `2px solid ${INK}`, paddingBottom: 14 }}>
+            {companyName && <div style={{ fontSize: 13.5, color: "#6b6455", marginBottom: 4 }}>{companyName}</div>}
+            <div className="stmt-title" style={{ fontFamily: "'Markazi Text', serif", fontSize: 24, fontWeight: 700, color: INK }}>تقرير حساب الزكاة الشرعية</div>
+            <div className="stmt-sub" style={{ fontSize: 12.5, color: "#847c69", marginTop: 4 }}>
+              {data.hawlStart && data.hawlEnd ? `الحول: من ${data.hawlStart} إلى ${data.hawlEnd}` : "لم يتم تحديد فترة الحول بعد"}
+              {" · "}نسبة الزكاة {rate}%
+            </div>
+          </div>
           <Card style={{ padding: 18, marginBottom: 16 }}>
-            <div style={{ fontWeight: 700, color: INK, fontSize: 14, marginBottom: 10 }}>إعدادات الحول والنصاب</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+            <div className="no-print" style={{ fontWeight: 700, color: INK, fontSize: 14, marginBottom: 10 }}>إعدادات الحول والنصاب</div>
+            <div className="no-print" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
               <div>
                 <label style={{ fontSize: 11.5, color: "#6b6455", display: "block", marginBottom: 4 }}>بداية الحول</label>
                 <input type="date" value={data.hawlStart || ""} disabled={readOnly} onChange={(e) => setData({ hawlStart: e.target.value })} style={{ width: "100%", border: `1px solid ${RULE}`, borderRadius: 7, padding: "8px 9px", fontFamily: "inherit", fontSize: 13 }} />
@@ -3911,7 +3928,7 @@ function MainApp({ user }) {
                   });
                   if (which.includes("zakat") && active.zakat && active.zakat.rows) items.push({
                     landscape: false, title: `${active.name} — حساب الزكاة`,
-                    element: <ZakatModule data={active.zakat} setData={() => {}} readOnly savedClass={savedClass} />,
+                    element: <ZakatModule data={active.zakat} setData={() => {}} readOnly savedClass={savedClass} companyName={active.name} />,
                   });
                   return items;
                 }}
@@ -3979,7 +3996,7 @@ function MainApp({ user }) {
           </div>
         )}
 
-        {step === "zakat" && active && <ZakatModule data={active.zakat} setData={patchZakat} readOnly={readOnly} savedClass={savedClass} />}
+        {step === "zakat" && active && <ZakatModule data={active.zakat} setData={patchZakat} readOnly={readOnly} savedClass={savedClass} companyName={active.name} />}
       </div>
     </div>
   );
