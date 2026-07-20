@@ -49,6 +49,55 @@ const db = firebase.firestore();
 
 const { useState, useMemo, useRef, useEffect } = React;
 
+/* ---------------------------------- البصمة (قفل سريع محلي فوق جلسة فايربيز) ---------------------------------- */
+function isBiometricSupported() {
+  return !!(window.PublicKeyCredential && navigator.credentials);
+}
+async function isBiometricAvailableOnDevice() {
+  if (!isBiometricSupported()) return false;
+  try { return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(); } catch (e) { return false; }
+}
+function hasBiometricRegistered(uid) {
+  return !!localStorage.getItem(`selim_biometric_${uid}`);
+}
+async function registerBiometric(uid, label) {
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  const userIdBytes = new TextEncoder().encode(uid);
+  const cred = await navigator.credentials.create({
+    publicKey: {
+      challenge,
+      rp: { name: "Selim Finance" },
+      user: { id: userIdBytes, name: label || uid, displayName: label || "مستخدم" },
+      pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],
+      authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required", residentKey: "preferred" },
+      timeout: 60000,
+      attestation: "none",
+    },
+  });
+  const credIdB64 = btoa(String.fromCharCode(...new Uint8Array(cred.rawId)));
+  localStorage.setItem(`selim_biometric_${uid}`, credIdB64);
+  return true;
+}
+async function verifyBiometric(uid) {
+  const credIdB64 = localStorage.getItem(`selim_biometric_${uid}`);
+  if (!credIdB64) return false;
+  const rawId = Uint8Array.from(atob(credIdB64), (c) => c.charCodeAt(0));
+  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  await navigator.credentials.get({
+    publicKey: {
+      challenge,
+      allowCredentials: [{ id: rawId, type: "public-key", transports: ["internal"] }],
+      userVerification: "required",
+      timeout: 60000,
+    },
+  });
+  return true;
+}
+function disableBiometric(uid) {
+  localStorage.removeItem(`selim_biometric_${uid}`);
+  sessionStorage.removeItem(`selim_unlocked_${uid}`);
+}
+
 function makeIcon(glyph) {
   return function IconComp({ size = 16, color = "currentColor", style }) {
     return <span style={{ fontSize: size, lineHeight: 1, color, display: "inline-block", ...style }}>{glyph}</span>;
@@ -77,6 +126,7 @@ const LogOut = makeIcon("⏻");
 const Share2 = makeIcon("🔗");
 const Eye = makeIcon("👁️");
 const Lock = makeIcon("🔒");
+const Fingerprint = makeIcon("🔐");
 
 /* ---------------------------------- ثوابت التصميم ---------------------------------- */
 
@@ -496,9 +546,9 @@ function NumInput({ value, onChange, style, disabled, className }) {
   );
 }
 
-function PrimaryBtn({ children, onClick, disabled, icon: Icon }) {
+function PrimaryBtn({ children, onClick, disabled, icon: Icon, style }) {
   return (
-    <button onClick={onClick} disabled={disabled} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: disabled ? "#c9c2ae" : INK, color: CREAM, border: "none", borderRadius: 8, padding: "10px 20px", fontFamily: "'IBM Plex Sans Arabic', sans-serif", fontWeight: 600, fontSize: 14.5, cursor: disabled ? "not-allowed" : "pointer" }}>
+    <button onClick={onClick} disabled={disabled} style={{ display: "inline-flex", alignItems: "center", gap: 8, background: disabled ? "#c9c2ae" : INK, color: CREAM, border: "none", borderRadius: 8, padding: "10px 20px", fontFamily: "'IBM Plex Sans Arabic', sans-serif", fontWeight: 600, fontSize: 14.5, cursor: disabled ? "not-allowed" : "pointer", ...style }}>
       {children}
       {Icon && <Icon size={16} />}
     </button>
@@ -3258,7 +3308,7 @@ function SavePeriodBar({ year, setYear, month, setMonth, openingInv, setOpeningI
   );
 }
 
-function MainApp({ user }) {
+function MainApp({ user, biometric }) {
   const [companies, setCompanies] = useState([]);
   const [loadingCompanies, setLoadingCompanies] = useState(true);
   const [activeId, setActiveId] = useState(null);
@@ -3307,6 +3357,30 @@ function MainApp({ user }) {
 
   const [activePeriodId, setActivePeriodId] = useState(null);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+
+  // استرجاع آخر مكان كان فيه المستخدم عند فتح التطبيق تاني (بدل الرجوع لقائمة الشركات دايمًا)
+  const [navReady, setNavReady] = useState(false);
+  useEffect(() => {
+    if (!user || !user.uid) return;
+    try {
+      const saved = JSON.parse(localStorage.getItem(`selim_nav_${user.uid}`) || "null");
+      if (saved) {
+        if (saved.activeId) setActiveId(saved.activeId);
+        if (saved.screen) setScreen(saved.screen);
+        if (saved.step) setStep(saved.step);
+        if (saved.stmtTab) setStmtTab(saved.stmtTab);
+        if (saved.activePeriodId) setActivePeriodId(saved.activePeriodId);
+        if (saved.selectedYear) setSelectedYear(saved.selectedYear);
+      }
+    } catch (e) {}
+    setNavReady(true);
+  }, [user.uid]);
+  useEffect(() => {
+    if (!user || !user.uid || !navReady) return;
+    try {
+      localStorage.setItem(`selim_nav_${user.uid}`, JSON.stringify({ activeId, screen, step, stmtTab, activePeriodId, selectedYear }));
+    } catch (e) {}
+  }, [user.uid, navReady, activeId, screen, step, stmtTab, activePeriodId, selectedYear]);
 
   useEffect(() => {
     const merged = {};
@@ -3761,6 +3835,17 @@ function MainApp({ user }) {
                 <FileSpreadsheet size={12} /> {backupBusy ? "جارِ…" : "نسخة احتياطية"}
               </button>
               <div style={{ fontSize: 10.5, opacity: 0.85, direction: "ltr" }}>{user.email}</div>
+              {biometric && biometric.supported && (
+                biometric.registered ? (
+                  <button onClick={biometric.onDisable} title="إلغاء قفل البصمة لهذا الجهاز" style={{ background: "rgba(255,255,255,0.08)", border: "none", borderRadius: 7, padding: "6px 10px", color: CREAM, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontSize: 11.5 }}>
+                    <Fingerprint size={12} /> البصمة مفعّلة
+                  </button>
+                ) : (
+                  <button onClick={async () => { try { await biometric.onRegister(); } catch (e) { alert("تعذّر تفعيل البصمة: " + e.message); } }} title="فعّل قفل البصمة لهذا الجهاز" style={{ background: "rgba(255,255,255,0.08)", border: "none", borderRadius: 7, padding: "6px 10px", color: CREAM, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontSize: 11.5 }}>
+                    <Fingerprint size={12} /> فعّل البصمة
+                  </button>
+                )
+              )}
               <button onClick={() => auth.signOut()} style={{ background: "rgba(255,255,255,0.08)", border: "none", borderRadius: 7, padding: "6px 10px", color: CREAM, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontSize: 11.5 }}>
                 <LogOut size={12} /> خروج
               </button>
@@ -4116,6 +4201,49 @@ function AuthScreen() {
   );
 }
 
+function AppLock({ user, children }) {
+  const uid = user.uid;
+  const [registered, setRegistered] = useState(hasBiometricRegistered(uid));
+  const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem(`selim_unlocked_${uid}`) === "1" || !hasBiometricRegistered(uid));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [supported, setSupported] = useState(true);
+  useEffect(() => { isBiometricAvailableOnDevice().then(setSupported); }, []);
+
+  const doUnlock = async () => {
+    setBusy(true); setErr("");
+    try {
+      await verifyBiometric(uid);
+      sessionStorage.setItem(`selim_unlocked_${uid}`, "1");
+      setUnlocked(true);
+    } catch (e) {
+      setErr("تعذّر التحقق بالبصمة، جرّب تاني أو اخرج ودخول تاني بكلمة السر.");
+    }
+    setBusy(false);
+  };
+
+  if (registered && !unlocked) {
+    return (
+      <div style={{ minHeight: "100vh", background: CREAM, fontFamily: "'IBM Plex Sans Arabic', sans-serif", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }} dir="rtl">
+        <style>{`:root{--selim-logo:url("${LOGO_URI}");}`}{FONTS}</style>
+        <Card style={{ padding: 34, width: "100%", maxWidth: 380, textAlign: "center" }}>
+          <img src={LOGO_URI} alt="Selim Finance" style={{ height: 46, margin: "0 auto 14px", display: "block" }} />
+          <div style={{ fontFamily: "'Markazi Text', serif", fontSize: 19, fontWeight: 700, color: INK, marginBottom: 18 }}>التطبيق مقفول بالبصمة</div>
+          {err && <div style={{ background: "#faeceb", color: RED_INK, borderRadius: 7, padding: "8px 10px", fontSize: 12.5, marginBottom: 14 }}>{err}</div>}
+          <PrimaryBtn icon={Fingerprint} onClick={doUnlock} disabled={busy} style={{ width: "100%", justifyContent: "center" }}>
+            {busy ? "جارِ التحقق…" : "افتح بالبصمة"}
+          </PrimaryBtn>
+          <button onClick={() => auth.signOut()} style={{ background: "none", border: "none", color: "#847c69", fontSize: 12.5, marginTop: 16, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>
+            تسجيل خروج والدخول بحساب تاني
+          </button>
+        </Card>
+      </div>
+    );
+  }
+
+  return React.cloneElement(children, { biometric: { registered, supported, onRegister: async () => { await registerBiometric(uid, user.email); setRegistered(true); sessionStorage.setItem(`selim_unlocked_${uid}`, "1"); }, onDisable: () => { disableBiometric(uid); setRegistered(false); } } });
+}
+
 function Root() {
   const [user, setUser] = useState(undefined);
   useEffect(() => {
@@ -4130,7 +4258,7 @@ function Root() {
     );
   }
   if (!user) return <AuthScreen />;
-  return <MainApp user={user} />;
+  return <AppLock user={user}><MainApp user={user} /></AppLock>;
 }
 
 
