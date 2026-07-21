@@ -488,7 +488,20 @@ function buildFlatRows(rawRows, mapping) {
     const debit = parseFloat(row[mapping.debit]) || 0;
     const credit = parseFloat(row[mapping.credit]) || 0;
     if (debit === 0 && credit === 0) continue;
-    out.push({ id: uid(), code: String(code ?? "").trim(), name: String(name).trim(), debit, credit, category: guessCategory(name, code) });
+    const nm = String(name).trim();
+    let cat = guessCategory(nm, code);
+    // نفس منطق فصل العملاء/الموردين المستخدم في وضع الشجرة — كان غايبًا هنا تمامًا،
+    // فأي ميزان يُرفع بصيغة مسطّحة (بدون تدرّج شجري) كان يخرج بدون تصنيف عملاء/موردين ولا subtype خالص
+    const isCustomer = /عملاء|عميل/.test(nm);
+    const isSupplier = /موردين|مورد/.test(nm);
+    const nature = debit >= credit ? "debit" : "credit";
+    if (isCustomer) cat = nature === "debit" ? "asset_current" : "liability_current";
+    else if (isSupplier) cat = nature === "credit" ? "liability_current" : "asset_current";
+    let subtype = null;
+    if (isCustomer) subtype = nature === "debit" ? "customer_debt" : "customer_prepaid";
+    else if (isSupplier) subtype = nature === "credit" ? "supplier_debt" : "supplier_prepaid";
+    out.push({ id: uid(), code: String(code ?? "").trim(), name: nm, debit, credit, category: cat,
+      isCustomer, isSupplier, subtype, opening: 0, parentName: nm });
   }
   return out;
 }
@@ -984,7 +997,8 @@ function computeFigures(rows, openingInventory) {
   // المخزون: من حساب المخزون بالميزانية فقط — أول المدة = رصيد بداية، آخر المدة = رصيد نهاية
   // نستبعد حسابات المخزون تحت المتاجرة والتحويلات (قيود تسوية)
   const invRows = rows.filter((r) => /مخزون|بضاعة|بضائع/.test(r.name) && !/متاجرة|تحويل|اول المدة|أول المدة/.test(r.name) && (r.category === "asset_current" || r.category === "asset_noncurrent"));
-  const closingInventory = invRows.reduce((s, r) => s + Math.abs(r.debit - r.credit), 0);
+  // نفس مبدأ إصلاح النقدية: حساب مخزون برصيد دائن (غير طبيعي) لازم يتخصم من الإجمالي، مش يتجمع عليه
+  const closingInventory = invRows.reduce((s, r) => s + (r.debit - r.credit), 0);
   const openingInvFromAccounts = invRows.reduce((s, r) => s + (r.opening || 0), 0);
   const openInv = openingInvFromAccounts > 0 ? openingInvFromAccounts : (openingInventory || 0);
   const purchases = sumMov("purchases") - sumMov("purchase_returns");
@@ -1314,8 +1328,8 @@ function incomeSheetSpec(f, companyName, title, periodLabel, partners) {
 
   SEC("الإيرادات");
   R("إجمالي المبيعات", f.grossSales, pctOf(f.grossSales));
-  R("مردودات المبيعات", f.salesReturns, pctOf(f.salesReturns));
-  R("خصومات مسموح بها", f.salesDiscounts, pctOf(f.salesDiscounts));
+  R("(−) مردودات المبيعات", -f.salesReturns, pctOf(-f.salesReturns));
+  R("(−) خصومات مسموح بها", -f.salesDiscounts, pctOf(-f.salesDiscounts));
   TOT("صافي المبيعات", f.netSales);
   SEC("تكلفة البضاعة المباعة");
   R("مخزون بداية الفترة", f.openInv, "");
@@ -1328,8 +1342,8 @@ function incomeSheetSpec(f, companyName, title, periodLabel, partners) {
   TOT("إجمالي المصروفات", f.opex);
   TOT("صافي الربح التشغيلي", f.operatingProfit, true);
   if (f.otherIncomeRows.length) { SEC("الإيرادات الأخرى"); f.otherIncomeRows.forEach((r) => R(r.name, r.amount, "")); TOT("إجمالي الإيرادات الأخرى", f.otherIncome); }
-  if (f.otherExpense > 0) R("مصروفات أخرى", f.otherExpense, "");
-  if (f.tax > 0) R("مصاريف الضرائب", f.tax, "");
+  if (f.otherExpense > 0) R("(−) مصروفات أخرى", -f.otherExpense, "");
+  if (f.tax > 0) R("(−) مصاريف الضرائب", -f.tax, "");
   TOT("صافي الربح النهائي", f.netProfit, true);
   if (partners && partners.length) {
     SEC("توزيع الأرباح على الشركاء");
@@ -2065,8 +2079,8 @@ function DetailedIncomeStatement({ f, title, periodLabel, sourceLabel, companyNa
             <tbody>
               <XSection text="الإيرادات" />
               <XItem idx={1} label="إجمالي المبيعات" val={f.grossSales} showPct />
-              <XItem idx={2} label="مردودات المبيعات" val={f.salesReturns} showPct />
-              <XItem idx={3} label="خصومات مسموح بها" val={f.salesDiscounts} showPct />
+              <XItem idx={2} label="(−) مردودات المبيعات" val={-f.salesReturns} showPct />
+              <XItem idx={3} label="(−) خصومات مسموح بها" val={-f.salesDiscounts} showPct />
               <XTotal label="صافي المبيعات" val={f.netSales} />
 
               <XSection text="تكلفة البضاعة المباعة" />
@@ -2084,8 +2098,8 @@ function DetailedIncomeStatement({ f, title, periodLabel, sourceLabel, companyNa
               {f.otherIncomeRows.length > 0 && <XSection text="الإيرادات الأخرى" />}
               {f.otherIncomeRows.map((r, i) => (<XItem key={i} idx={i + 1} label={r.name} val={r.amount} />))}
               {f.otherIncomeRows.length > 0 && <XTotal label="إجمالي الإيرادات الأخرى" val={f.otherIncome} />}
-              {f.otherExpense > 0 && <XItem label="مصروفات أخرى" val={f.otherExpense} />}
-              {f.tax > 0 && <XItem label="مصاريف الضرائب" val={f.tax} />}
+              {f.otherExpense > 0 && <XItem label="(−) مصروفات أخرى" val={-f.otherExpense} />}
+              {f.tax > 0 && <XItem label="(−) مصاريف الضرائب" val={-f.tax} />}
               <XTotal label="◆ صافي الربح النهائي" val={f.netProfit} dark color={GREEN_INK} />
 
               {partners && partners.length > 0 && (
@@ -2829,7 +2843,7 @@ function ZakatModule({ data, setData, readOnly, savedClass, companyName }) {
 
   useEffect(() => {
     if (f && !data.items) {
-      const taxLiab = round2(Math.abs(f.liabilityCurrentRows.filter((r) => /ضريبة/.test(r.name)).reduce((s, r) => s + r.amount, 0)));
+      const taxLiab = round2(f.liabilityCurrentRows.filter((r) => /ضريبة/.test(r.name)).reduce((s, r) => s + r.amount, 0));
       // تفاصيل كل بند من الحسابات الفعلية في الميزان
       // مهم: لا نأخذ Math.abs هنا — لو حساب فرعي رصيده بعكس طبيعة مجموعته (مثلاً صندوق نقدية برصيد دائن)
       // لازم يفضل بالسالب عشان يُخصم صح من إجمالي البند، مش يتجمع عليه غلط
@@ -2848,7 +2862,7 @@ function ZakatModule({ data, setData, readOnly, savedClass, companyName }) {
       setData({
         items: [
           { id: uid(), group: "asset", label: "النقدية والخزائن", amount: round2(f.cash), sources: srcOf((f.balanceGroups.cash.rows || [])) },
-          { id: uid(), group: "asset", label: "المدينون الآخرون والأمانات", amount: 0, sources: [] },
+          { id: uid(), group: "asset", label: "المدينون الآخرون والأمانات", amount: round2((f.balanceGroups.debtors && f.balanceGroups.debtors.total) || 0), sources: srcOf((f.balanceGroups.debtors && f.balanceGroups.debtors.rows) || []) },
           { id: uid(), group: "asset", label: "ذمم العملاء المدينة (المرجوة)", amount: round2(Math.abs(f.customerDebt)), sources: bySub("customer_debt") },
           { id: uid(), group: "asset", label: "دفعات مقدمة للموردين", amount: round2(Math.abs(f.supplierPrepaid)), sources: bySub("supplier_prepaid") },
           { id: uid(), group: "asset", label: "المخزون التجاري (بسعر السوق)", amount: round2(f.closingInventory), sources: invSrc },
