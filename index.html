@@ -1213,7 +1213,14 @@ function topDebtorsReport(periods, year, topN) {
       return { name, debt, purchases, ratio, pctOfTotal, note: noteForDebtor(ratio, pctOfTotal) };
     })
     .sort((a, b) => b.debt - a.debt)
-    .slice(0, topN || 6);
+    .slice(0, topN || 6)
+    .sort((a, b) => {
+      // ترتيب العرض حسب النسبة (مديونية/مشتريات) من الأكبر للأصغر — دين مرحّل (بدون مشتريات) أشد خطورة فيتصدّر
+      if (a.ratio === null && b.ratio === null) return b.debt - a.debt;
+      if (a.ratio === null) return -1;
+      if (b.ratio === null) return 1;
+      return b.ratio - a.ratio;
+    });
   const totals = {
     debt: round2(rows.reduce((s, r) => s + r.debt, 0)),
     purchases: round2(rows.reduce((s, r) => s + r.purchases, 0)),
