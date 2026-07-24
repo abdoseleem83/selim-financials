@@ -1453,6 +1453,40 @@ function balanceSheetSpec(f, companyName, periodLabel) {
   return buildSheet(rows, [5, 42, 16]);
 }
 
+function debtorsSheetSpec(periods, year, companyName, topN) {
+  const { rows: data, asOfLabel, yearLabel } = topDebtorsReport(periods, year, topN);
+  const rows = [];
+  brandRows(rows, 5);
+  rows.push({ cells: [{ v: companyName, style: { bg: colorFor("header"), color: "FFFFFFFF", bold: true, sz: 14, align: "center" } }, {}, {}, {}, {}], merge: { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } } });
+  rows.push({ cells: [{ v: `أكبر العملاء مديونية مقارنة بمشترياتهم — المديونية كما في نهاية ${asOfLabel}، المشتريات إجمالي ${yearLabel}`, style: { bg: colorFor("header"), color: "FFFFFFFF", align: "center", wrap: true } }, {}, {}, {}, {}], merge: { s: { r: 1, c: 0 }, e: { r: 1, c: 4 } } });
+  rows.push({ cells: [
+    { v: "م", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true, align: "center" } },
+    { v: "العميل", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true } },
+    { v: "المديونية الحالية", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true, align: "left" } },
+    { v: "إجمالي المشتريات", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true, align: "left" } },
+    { v: "مديونية / مشتريات", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true, align: "left" } },
+  ] });
+  data.forEach((r, i) => {
+    const ratioColor = r.ratio === null ? "FF8A8271" : r.ratio >= 0.8 ? "FF9C3B34" : r.ratio >= 0.4 ? "FFB7791F" : "FF1E7145";
+    rows.push({ cells: [
+      { v: i + 1, style: { align: "center", color: "FF8A8271" } },
+      { v: r.name, style: { wrap: true } },
+      { v: r.debt, t: "n", style: { align: "left" } },
+      { v: r.purchases, t: "n", style: { align: "left" } },
+      r.ratio === null
+        ? { v: "دين مرحّل", style: { align: "left", color: "FF8A8271" } }
+        : { v: r.ratio, t: "n", style: { align: "left", bold: true, color: ratioColor }, z: "0.00%" },
+    ] });
+  });
+  if (!data.length) {
+    rows.push({ cells: [{ v: "لا توجد فترات مرفوعة لهذه السنة، أو لا يوجد عملاء مدينون.", style: { align: "center", color: "FF8A8271" } }, {}, {}, {}, {}], merge: { s: { r: rows.length, c: 0 }, e: { r: rows.length, c: 4 } } });
+  }
+  rows.push({ cells: [] });
+  rows.push({ cells: [{ v: `«مديونية/مشتريات» تقيس أي نسبة مما اشتراه العميل خلال ${yearLabel} لسه متحصّلة. «دين مرحّل» يعني رصيد بدون مشتريات مسجّلة في نفس الفترة.`, style: { wrap: true, color: "FF8A8271", sz: 9.5 } }, {}, {}, {}, {}], merge: { s: { r: rows.length, c: 0 }, e: { r: rows.length, c: 4 } } });
+  brandFooter(rows, 5);
+  return buildSheet(rows, [5, 40, 16, 16, 14]);
+}
+
 function homeSheetSpec(company, periods, year, annual, latest, zakatDue) {
   const rows = [];
   brandRows(rows, 9);
@@ -1685,7 +1719,7 @@ function trialSheetSpec(rows, companyName, periodLabel) {
   return buildSheet(out, [12, 40, 18, 16, 16]);
 }
 
-function exportWorkbook({ company, periods, companyName, monthlyList, annual, periodLabel, balanceF, balanceLabel, latest, year, zakatDue, zakatData, partners, which }) {
+function exportWorkbook({ company, periods, companyName, monthlyList, annual, periodLabel, balanceF, balanceLabel, latest, year, zakatDue, zakatData, partners, topDebtorsN, which }) {
   const wb = XLSX.utils.book_new();
   const clip = (s) => s.substring(0, 28).replace(/[\\/?*\[\]:]/g, "");
   if (which.includes("home")) {
@@ -1701,6 +1735,9 @@ function exportWorkbook({ company, periods, companyName, monthlyList, annual, pe
   }
   if (which.includes("balance") && balanceF) {
     XLSX.utils.book_append_sheet(wb, balanceSheetSpec(balanceF, companyName, balanceLabel), clip("المركز المالي"));
+  }
+  if (which.includes("debtors_top")) {
+    XLSX.utils.book_append_sheet(wb, debtorsSheetSpec(periods, year, companyName, topDebtorsN || 6), clip("أكبر العملاء مديونية"));
   }
   if (which.includes("trial") && monthlyList && monthlyList.length) {
     monthlyList.forEach((m) => {
@@ -1884,8 +1921,8 @@ function ExportBtns({ companyName, exportData, availableMonths, pdfTarget, pdfNa
   const [pdfOpen, setPdfOpen] = useState(false);
   const [busyPdf, setBusyPdf] = useState(false);
   const [ready, setReady] = useState(null);
-  const [sel, setSel] = useState({ home: true, income_monthly: true, income_annual: true, balance: true, trial: false, zakat: true });
-  const [pdfSel, setPdfSel] = useState({ home: false, income_monthly: true, income_annual: true, balance: true, trial: false, zakat: false });
+  const [sel, setSel] = useState({ home: true, income_monthly: true, income_annual: true, balance: true, trial: false, debtors_top: false, zakat: true });
+  const [pdfSel, setPdfSel] = useState({ home: false, income_monthly: true, income_annual: true, balance: true, trial: false, debtors_top: false, zakat: false });
   const [monthSel, setMonthSel] = useState("all");
   const [pdfMonthSel, setPdfMonthSel] = useState("");
   const toggle = (k) => setSel({ ...sel, [k]: !sel[k] });
@@ -1895,6 +1932,7 @@ function ExportBtns({ companyName, exportData, availableMonths, pdfTarget, pdfNa
     { k: "income_monthly", l: "قائمة الدخل الشهرية" },
     { k: "income_annual", l: "قائمة الدخل السنوية" },
     { k: "balance", l: "المركز المالي" },
+    { k: "debtors_top", l: "أكبر العملاء مديونية" },
     { k: "trial", l: "ميزان المراجعة" },
     { k: "zakat", l: "حساب الزكاة" },
   ];
@@ -4440,6 +4478,10 @@ function MainApp({ user, biometric }) {
                     landscape: false, title: `${active.name} — المركز المالي ${mLabel}`,
                     element: <BalanceSheet f={bFig} periodLabel={`كما في نهاية ${mLabel}`} companyName={active.name} readOnly />,
                   });
+                  if (which.includes("debtors_top")) items.push({
+                    landscape: false, title: `${active.name} — أكبر العملاء مديونية ${selectedYear}`,
+                    element: <TopDebtorsReport periods={sortedPeriods} year={selectedYear} companyName={active.name} topN={topDebtorsN} setTopN={() => {}} />,
+                  });
                   if (which.includes("trial") && p) items.push({
                     landscape: true, title: `${active.name} — ميزان المراجعة ${mLabel}`,
                     element: <TrialBalanceView rows={p.rows} periodLabel={mLabel} companyName={active.name} readOnly />,
@@ -4481,6 +4523,7 @@ function MainApp({ user, biometric }) {
                     zakatDue: computeZakatTotal(active.zakat),
                     zakatData: active.zakat,
                     partners,
+                    topDebtorsN,
                     which,
                   });
                 }} />
