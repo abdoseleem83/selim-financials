@@ -3462,7 +3462,7 @@ function ZakatModule({ data, setData, readOnly, savedClass, companyName }) {
             <GhostBtn icon={ScrollText} onClick={async () => {
               if (zView !== "statement") { setZView("statement"); await new Promise((r) => setTimeout(r, 350)); }
               try {
-                const payload = await exportStatementPdf({ targetId: "print-zakat", fileName: "حساب الزكاة", companyName: companyName || "", title: `${companyName ? companyName + " — " : ""}حساب الزكاة` });
+                const payload = await exportStatementPdf({ targetId: "print-zakat", fileName: companyName ? `${companyName} - حساب الزكاة` : "حساب الزكاة", companyName: companyName || "", title: `${companyName ? companyName + " — " : ""}حساب الزكاة` });
                 if (payload) setZakatPdf(payload);
               } catch (e) { alert("تعذّر تصدير PDF: " + e.message); }
             }}>تصدير PDF</GhostBtn>
@@ -4530,7 +4530,7 @@ function MainApp({ user, biometric }) {
               <ExportBtns
                 companyName={active.name}
                 pdfTarget={{ home: "print-home", income_monthly: "print-income", income_annual: "print-income", balance: "print-balance", equity: "print-equity", debtors_top: "print-debtors", trial: "print-trial" }[stmtTab] || null}
-                pdfLandscape={stmtTab === "home" || stmtTab === "trial" || stmtTab === "debtors_top"}
+                pdfLandscape={stmtTab === "home" || stmtTab === "trial"}
                 buildPdfItems={(which, monthId) => {
                   const p = monthId ? sortedPeriods.find((x) => x.id === monthId) : activePeriod;
                   const mLabel = p ? `${MONTH_NAMES[p.month - 1]} ${p.year}` : "";
@@ -4554,7 +4554,7 @@ function MainApp({ user, biometric }) {
                     element: <BalanceSheet f={bFig} periodLabel={`كما في نهاية ${mLabel}`} companyName={active.name} readOnly />,
                   });
                   if (which.includes("debtors_top")) items.push({
-                    landscape: true, title: `${active.name} — أكبر العملاء مديونية ${selectedYear}`,
+                    landscape: false, title: `${active.name} — أكبر العملاء مديونية ${selectedYear}`,
                     element: <TopDebtorsReport periods={sortedPeriods} year={selectedYear} companyName={active.name} topN={topDebtorsN} setTopN={() => {}} />,
                   });
                   if (which.includes("trial") && p) items.push({
@@ -4568,13 +4568,14 @@ function MainApp({ user, biometric }) {
                   return items;
                 }}
                 pdfName={
-                  stmtTab === "home" ? `لوحة القيادة - ${active.name} ${selectedYear}`
-                  : stmtTab === "income_monthly" ? `قائمة الدخل - ${activePeriod ? MONTH_NAMES[activePeriod.month - 1] + " " + activePeriod.year : ""}`
-                  : stmtTab === "income_annual" ? `قائمة الدخل السنوية - ${selectedYear}`
-                  : stmtTab === "balance" ? `المركز المالي - ${activePeriod ? MONTH_NAMES[activePeriod.month - 1] + " " + activePeriod.year : ""}`
-                  : stmtTab === "debtors_top" ? `أكبر العملاء مديونية - ${active.name} ${selectedYear}`
-                  : stmtTab === "trial" ? `ميزان المراجعة - ${activePeriod ? MONTH_NAMES[activePeriod.month - 1] + " " + activePeriod.year : ""}`
-                  : `تقرير - ${active.name}`
+                  stmtTab === "home" ? `${active.name} - لوحة القيادة ${selectedYear}`
+                  : stmtTab === "income_monthly" ? `${active.name} - قائمة الدخل - ${activePeriod ? MONTH_NAMES[activePeriod.month - 1] + " " + activePeriod.year : ""}`
+                  : stmtTab === "income_annual" ? `${active.name} - قائمة الدخل السنوية - ${selectedYear}`
+                  : stmtTab === "balance" ? `${active.name} - المركز المالي - ${activePeriod ? MONTH_NAMES[activePeriod.month - 1] + " " + activePeriod.year : ""}`
+                  : stmtTab === "equity" ? `${active.name} - التغير في حقوق الملكية - ${activePeriod ? MONTH_NAMES[activePeriod.month - 1] + " " + activePeriod.year : ""}`
+                  : stmtTab === "debtors_top" ? `${active.name} - أكبر العملاء مديونية - ${selectedYear}`
+                  : stmtTab === "trial" ? `${active.name} - ميزان المراجعة - ${activePeriod ? MONTH_NAMES[activePeriod.month - 1] + " " + activePeriod.year : ""}`
+                  : `${active.name} - تقرير`
                 }
                 availableMonths={sortedPeriods.map((p) => ({ id: p.id, label: `${MONTH_NAMES[p.month - 1]} ${p.year}` }))}
                 exportData={(which, monthSel) => {
