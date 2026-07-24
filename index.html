@@ -123,6 +123,7 @@ const ArrowRight = makeIcon("→");
 const Pencil = makeIcon("✎");
 const X = makeIcon("✕");
 const LogOut = makeIcon("⏻");
+const Users = makeIcon("👥");
 const Share2 = makeIcon("🔗");
 const Eye = makeIcon("👁️");
 const Lock = makeIcon("🔒");
@@ -1168,7 +1169,43 @@ function mergeFigures(list) {
   };
 }
 
-/* ---------------------------------- عناصر عرض القوائم ---------------------------------- */
+/* تقرير أكبر العملاء مديونية مقارنة بمشترياتهم:
+   - المديونية: الرصيد الفعلي المستحق على كل عميل من آخر فترة مرفوعة في السنة المختارة (رصيد نهاية المدة).
+   - المشتريات: إجمالي صافي الحركة المدينة على حساب كل عميل عبر كل شهور نفس السنة — بنفس أسلوب تجميع
+     mergeFigures للقوائم السنوية بالضبط (جمع رقم كل شهر كما هو، من غير افتراض إذا كان الميزان تراكمي أو لا)،
+     عشان الرقمين يكونوا على نفس الأساس المستخدم في باقي القوائم ومفيش ازدواج أو نقص في العد. */
+function topDebtorsReport(periods, year, topN) {
+  const yearPeriods = (periods || []).filter((p) => p.year === year).sort((a, b) => a.month - b.month);
+  if (!yearPeriods.length) return { rows: [], asOfLabel: "", yearLabel: "" };
+  const latest = yearPeriods[yearPeriods.length - 1];
+  const debtByName = {};
+  (latest.rows || []).forEach((r) => {
+    if (r.subtype === "customer_debt") debtByName[r.name] = (debtByName[r.name] || 0) + (r.debit - r.credit);
+  });
+  const purchasesByName = {};
+  yearPeriods.forEach((p) => {
+    (p.rows || []).forEach((r) => {
+      if (r.isCustomer) purchasesByName[r.name] = (purchasesByName[r.name] || 0) + (r.netDebit || 0);
+    });
+  });
+  const rows = Object.keys(debtByName)
+    .filter((n) => debtByName[n] > 0.004)
+    .map((name) => {
+      const debt = round2(debtByName[name]);
+      const purchases = round2(purchasesByName[name] || 0);
+      const ratio = purchases > 0.004 ? debt / purchases : null;
+      return { name, debt, purchases, ratio };
+    })
+    .sort((a, b) => b.debt - a.debt)
+    .slice(0, topN || 6);
+  const firstM = MONTH_NAMES[yearPeriods[0].month - 1];
+  const lastM = MONTH_NAMES[latest.month - 1];
+  return {
+    rows,
+    asOfLabel: `${lastM} ${latest.year}`,
+    yearLabel: yearPeriods.length > 1 ? `${firstM}–${lastM} ${latest.year}` : `${lastM} ${latest.year}`,
+  };
+}
 
 /* حساب أرقام فترة واحدة بشكل صحيح:
    - لو الميزان "تراكمي من بداية السنة" (الوضع الافتراضي في برامج الحسابات): أرقام قائمة الدخل
@@ -2435,7 +2472,77 @@ function PerformanceSummary({ f, periodLabel, companyName, monthCount, zakatDue 
   );
 }
 
+function TopDebtorsReport({ periods, year, companyName, topN, setTopN }) {
+  const printId = "print-debtors";
+  const { rows, asOfLabel, yearLabel } = useMemo(() => topDebtorsReport(periods, year, topN), [periods, year, topN]);
+  const ratioColor = (ratio) => {
+    if (ratio === null) return "#8a8271";
+    if (ratio >= 0.8) return RED_INK;
+    if (ratio >= 0.4) return "#b7791f";
+    return GREEN_INK;
+  };
+  return (
+    <div style={{ maxWidth: 900 }}>
+      {/* التصدير موحّد أعلى القوائم */}
+      <Card style={{ padding: 0, maxWidth: 900, background: "#fff", overflow: "hidden" }}>
+        <div id={printId} className="print-area" style={{ background: "#fff", position: "relative" }}>
+          <div className="stmt-watermark" />
+          <div style={{ background: INK, color: "#fff", textAlign: "center", padding: "14px 10px" }}>
+            <div style={{ fontFamily: "'Markazi Text', serif", fontSize: 22, fontWeight: 700 }}>{companyName}</div>
+            <div style={{ fontSize: 14, marginTop: 2 }}>أكبر العملاء مديونية مقارنة بمشترياتهم</div>
+            <div style={{ fontSize: 10.5, opacity: 0.8, marginTop: 3 }}>
+              المديونية كما في نهاية {asOfLabel} — إجمالي المشتريات خلال {yearLabel}
+            </div>
+          </div>
+          <div className="no-print" style={{ padding: "10px 14px", display: "flex", gap: 8, alignItems: "center", borderBottom: `1px solid ${RULE}` }}>
+            <span style={{ fontSize: 12.5, color: "#6b6455", fontWeight: 600 }}>عدد العملاء المعروضين:</span>
+            {[5, 6, 10].map((n) => (
+              <button key={n} onClick={() => setTopN(n)}
+                style={{ padding: "5px 14px", borderRadius: 14, border: `1px solid ${topN === n ? INK : RULE}`, background: topN === n ? INK : "#fff", color: topN === n ? "#fff" : INK, fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "'IBM Plex Sans Arabic', sans-serif" }}>
+                {n}
+              </button>
+            ))}
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ background: "#2c3e57", color: "#fff", fontSize: 11.5 }}>
+                <th style={{ padding: "6px 8px", width: 24 }}>م</th>
+                <th style={{ padding: "6px 8px", textAlign: "right" }}>العميل</th>
+                <th style={{ padding: "6px 8px", textAlign: "left", whiteSpace: "nowrap" }}>المديونية الحالية</th>
+                <th style={{ padding: "6px 8px", textAlign: "left", whiteSpace: "nowrap" }}>إجمالي المشتريات</th>
+                <th style={{ padding: "6px 8px", textAlign: "left", width: 100, whiteSpace: "nowrap" }}>مديونية/مشتريات</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i} style={{ borderBottom: "1px solid #e6e1d4", background: i % 2 ? "#fbf9f4" : "#fff" }}>
+                  <td style={{ padding: "7px 8px", width: 24, color: "#8a8271", fontSize: 11, textAlign: "center" }}>{i + 1}</td>
+                  <td style={{ padding: "7px 8px", fontSize: 12.5 }}>{r.name}</td>
+                  <td style={{ padding: "7px 8px", textAlign: "left", direction: "ltr", fontSize: 12.5, whiteSpace: "nowrap" }}>{fmt(r.debt)}</td>
+                  <td style={{ padding: "7px 8px", textAlign: "left", direction: "ltr", fontSize: 12.5, whiteSpace: "nowrap" }}>{fmt(r.purchases)}</td>
+                  <td style={{ padding: "7px 8px", textAlign: "left", direction: "ltr", fontSize: 12.5, fontWeight: 700, whiteSpace: "nowrap", color: ratioColor(r.ratio) }}>
+                    {r.ratio === null ? "دين مرحّل" : `${(r.ratio * 100).toFixed(1)}%`}
+                  </td>
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr><td colSpan={5} style={{ padding: 22, textAlign: "center", color: "#847c69", fontSize: 12.5 }}>لا توجد فترات مرفوعة لهذه السنة، أو لا يوجد عملاء مدينون.</td></tr>
+              )}
+            </tbody>
+          </table>
+          <div style={{ padding: "10px 14px", fontSize: 10.5, color: "#8a8271", lineHeight: 1.7 }}>
+            «مديونية/مشتريات» تقيس أي نسبة مما اشتراه العميل خلال {yearLabel} لسه متحصّلة. نسبة عالية (فوق 80%) قد
+            تعني تأخر في التحصيل نسبةً لحجم التعامل. «دين مرحّل» يعني رصيد بدون مشتريات مسجّلة في نفس الفترة —
+            على الأغلب مديونية من سنة سابقة.
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 /* ---------------------------------- الصفحة الرئيسية ولوحة القيادة ---------------------------------- */
+
 
 const MONTH_NAMES = ["يناير", "فبراير", "مارس", "ابريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
 
@@ -3370,6 +3477,7 @@ const STMT_TABS = [
   { key: "income_annual", label: "الدخل السنوي", icon: ScrollText },
   { key: "balance", label: "المركز المالي", icon: Scale },
   { key: "equity", label: "التغير في حقوق الملكية", icon: RefreshCw },
+  { key: "debtors_top", label: "أكبر العملاء مديونية", icon: Users },
   { key: "trial", label: "الميزان", icon: ClipboardList },
 ];
 
@@ -3591,6 +3699,7 @@ function MainApp({ user, biometric }) {
   const [screen, setScreen] = useState("companies");
   const [step, setStep] = useState("upload");
   const [stmtTab, setStmtTab] = useState("home");
+  const [topDebtorsN, setTopDebtorsN] = useState(6);
 
   const [file, setFile] = useState(null);
   const [parsedTree, setParsedTree] = useState(null);
@@ -4307,7 +4416,7 @@ function MainApp({ user, biometric }) {
               </div>
               <ExportBtns
                 companyName={active.name}
-                pdfTarget={{ home: "print-home", income_monthly: "print-income", income_annual: "print-income", balance: "print-balance", equity: "print-equity", trial: "print-trial" }[stmtTab] || null}
+                pdfTarget={{ home: "print-home", income_monthly: "print-income", income_annual: "print-income", balance: "print-balance", equity: "print-equity", debtors_top: "print-debtors", trial: "print-trial" }[stmtTab] || null}
                 pdfLandscape={stmtTab === "home" || stmtTab === "trial"}
                 buildPdfItems={(which, monthId) => {
                   const p = monthId ? sortedPeriods.find((x) => x.id === monthId) : activePeriod;
@@ -4346,6 +4455,7 @@ function MainApp({ user, biometric }) {
                   : stmtTab === "income_monthly" ? `قائمة الدخل - ${activePeriod ? MONTH_NAMES[activePeriod.month - 1] + " " + activePeriod.year : ""}`
                   : stmtTab === "income_annual" ? `قائمة الدخل السنوية - ${selectedYear}`
                   : stmtTab === "balance" ? `المركز المالي - ${activePeriod ? MONTH_NAMES[activePeriod.month - 1] + " " + activePeriod.year : ""}`
+                  : stmtTab === "debtors_top" ? `أكبر العملاء مديونية - ${active.name} ${selectedYear}`
                   : stmtTab === "trial" ? `ميزان المراجعة - ${activePeriod ? MONTH_NAMES[activePeriod.month - 1] + " " + activePeriod.year : ""}`
                   : `تقرير - ${active.name}`
                 }
@@ -4397,6 +4507,9 @@ function MainApp({ user, biometric }) {
             )}
             {stmtTab === "equity" && activePeriod && figures && (
               <EquityStatement rows={activePeriod.rows} f={figures} opening={active.opening || {}} setOpening={(o) => patchCompany({ opening: o })} periodLabel={monthlyPeriodLabel} readOnly={readOnly} />
+            )}
+            {stmtTab === "debtors_top" && (
+              <TopDebtorsReport periods={sortedPeriods} year={selectedYear} companyName={active.name} topN={topDebtorsN} setTopN={setTopDebtorsN} />
             )}
             {stmtTab === "trial" && (
               activePeriod ? <TrialBalanceView rows={activePeriod.rows} periodLabel={`${MONTH_NAMES[activePeriod.month - 1]} ${activePeriod.year}`} companyName={active.name} onSetCategory={setAccountCategory} readOnly={readOnly} />
