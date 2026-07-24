@@ -2579,31 +2579,30 @@ function TopDebtorsReport({ periods, year, companyName, topN, setTopN }) {
               </button>
             ))}
           </div>
-          <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
             <thead>
               <tr style={{ background: "#2c3e57", color: "#fff", fontSize: 11.5 }}>
-                <th style={{ padding: "6px 8px", width: 24 }}>م</th>
-                <th style={{ padding: "6px 8px", textAlign: "right" }}>العميل</th>
-                <th style={{ padding: "6px 8px", textAlign: "left", whiteSpace: "nowrap" }}>المديونية الحالية</th>
-                <th style={{ padding: "6px 8px", textAlign: "left", whiteSpace: "nowrap" }}>إجمالي المشتريات</th>
-                <th style={{ padding: "6px 8px", textAlign: "left", width: 90, whiteSpace: "nowrap" }}>مديونية/مشتريات</th>
-                <th style={{ padding: "6px 8px", textAlign: "left", width: 90, whiteSpace: "nowrap" }}>% من إجمالي المديونية</th>
-                <th style={{ padding: "6px 8px", textAlign: "right", minWidth: 200 }}>ملاحظات</th>
+                <th style={{ padding: "6px 6px", width: 22 }}>م</th>
+                <th style={{ padding: "6px 6px", textAlign: "right", width: "16%" }}>العميل</th>
+                <th style={{ padding: "6px 6px", textAlign: "left", width: "13%" }}>المديونية الحالية</th>
+                <th style={{ padding: "6px 6px", textAlign: "left", width: "13%" }}>إجمالي المشتريات</th>
+                <th style={{ padding: "6px 6px", textAlign: "left", width: "11%" }}>مديونية/مشتريات</th>
+                <th style={{ padding: "6px 6px", textAlign: "left", width: "11%" }}>% من إجمالي المديونية</th>
+                <th style={{ padding: "6px 6px", textAlign: "right" }}>ملاحظات</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r, i) => (
                 <tr key={i} style={{ borderBottom: "1px solid #e6e1d4", background: i % 2 ? "#fbf9f4" : "#fff" }}>
-                  <td style={{ padding: "7px 8px", width: 24, color: "#8a8271", fontSize: 11, textAlign: "center" }}>{i + 1}</td>
-                  <td style={{ padding: "7px 8px", fontSize: 12.5 }}>{r.name}</td>
-                  <td style={{ padding: "7px 8px", textAlign: "left", direction: "ltr", fontSize: 12.5, whiteSpace: "nowrap" }}>{fmt(r.debt)}</td>
-                  <td style={{ padding: "7px 8px", textAlign: "left", direction: "ltr", fontSize: 12.5, whiteSpace: "nowrap" }}>{fmt(r.purchases)}</td>
-                  <td style={{ padding: "7px 8px", textAlign: "left", direction: "ltr", fontSize: 12.5, fontWeight: 700, whiteSpace: "nowrap", color: ratioColor(r.ratio) }}>
+                  <td style={{ padding: "7px 6px", width: 22, color: "#8a8271", fontSize: 10.5, textAlign: "center" }}>{i + 1}</td>
+                  <td style={{ padding: "7px 6px", fontSize: 11.5, wordBreak: "break-word" }}>{r.name}</td>
+                  <td style={{ padding: "7px 6px", textAlign: "left", direction: "ltr", fontSize: 11.5 }}>{fmt(r.debt)}</td>
+                  <td style={{ padding: "7px 6px", textAlign: "left", direction: "ltr", fontSize: 11.5 }}>{fmt(r.purchases)}</td>
+                  <td style={{ padding: "7px 6px", textAlign: "left", direction: "ltr", fontSize: 11.5, fontWeight: 700, color: ratioColor(r.ratio) }}>
                     {r.ratio === null ? "دين مرحّل" : `${(r.ratio * 100).toFixed(1)}%`}
                   </td>
-                  <td style={{ padding: "7px 8px", textAlign: "left", direction: "ltr", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap" }}>{(r.pctOfTotal * 100).toFixed(1)}%</td>
-                  <td style={{ padding: "7px 8px", fontSize: 11, color: "#4a4536", lineHeight: 1.6 }}>{r.note}</td>
+                  <td style={{ padding: "7px 6px", textAlign: "left", direction: "ltr", fontSize: 11.5, fontWeight: 600 }}>{(r.pctOfTotal * 100).toFixed(1)}%</td>
+                  <td style={{ padding: "7px 6px", fontSize: 10.5, color: "#4a4536", lineHeight: 1.5, wordBreak: "break-word" }}>{r.note}</td>
                 </tr>
               ))}
               {rows.length === 0 && (
@@ -2611,18 +2610,17 @@ function TopDebtorsReport({ periods, year, companyName, topN, setTopN }) {
               )}
               {rows.length > 0 && totals && (
                 <tr style={{ background: "#F4EFE2", fontWeight: 700, borderTop: `2px solid ${INK}` }}>
-                  <td style={{ padding: "8px 8px" }}></td>
-                  <td style={{ padding: "8px 8px", fontSize: 12.5 }}>إجمالي العملاء المعروضين ({rows.length})</td>
-                  <td style={{ padding: "8px 8px", textAlign: "left", direction: "ltr", fontSize: 12.5, whiteSpace: "nowrap" }}>{fmt(totals.debt)}</td>
-                  <td style={{ padding: "8px 8px", textAlign: "left", direction: "ltr", fontSize: 12.5, whiteSpace: "nowrap" }}>{fmt(totals.purchases)}</td>
-                  <td style={{ padding: "8px 8px" }}></td>
-                  <td style={{ padding: "8px 8px", textAlign: "left", direction: "ltr", fontSize: 12.5, whiteSpace: "nowrap" }}>{(totals.pctOfTotal * 100).toFixed(1)}%</td>
-                  <td style={{ padding: "8px 8px", fontSize: 11, color: "#4a4536" }}>من إجمالي مديونية كل العملاء</td>
+                  <td style={{ padding: "8px 6px" }}></td>
+                  <td style={{ padding: "8px 6px", fontSize: 11.5 }}>إجمالي العملاء المعروضين ({rows.length})</td>
+                  <td style={{ padding: "8px 6px", textAlign: "left", direction: "ltr", fontSize: 11.5 }}>{fmt(totals.debt)}</td>
+                  <td style={{ padding: "8px 6px", textAlign: "left", direction: "ltr", fontSize: 11.5 }}>{fmt(totals.purchases)}</td>
+                  <td style={{ padding: "8px 6px" }}></td>
+                  <td style={{ padding: "8px 6px", textAlign: "left", direction: "ltr", fontSize: 11.5 }}>{(totals.pctOfTotal * 100).toFixed(1)}%</td>
+                  <td style={{ padding: "8px 6px", fontSize: 10.5, color: "#4a4536" }}>من إجمالي مديونية كل العملاء</td>
                 </tr>
               )}
             </tbody>
           </table>
-          </div>
           <div style={{ padding: "10px 14px", fontSize: 10.5, color: "#8a8271", lineHeight: 1.7 }}>
             «مديونية/مشتريات» تقيس أي نسبة مما اشتراه العميل خلال {yearLabel} لسه متحصّلة. «% من إجمالي المديونية»
             تقيس حصة كل عميل من إجمالي مديونية *كل* العملاء (مش بس المعروضين هنا) — نسبة عالية تعني تركّز مخاطرة
