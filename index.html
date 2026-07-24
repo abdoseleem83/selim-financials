@@ -1173,10 +1173,23 @@ function mergeFigures(list) {
    - المديونية: الرصيد الفعلي المستحق على كل عميل من آخر فترة مرفوعة في السنة المختارة (رصيد نهاية المدة).
    - المشتريات: إجمالي صافي الحركة المدينة على حساب كل عميل عبر كل شهور نفس السنة — بنفس أسلوب تجميع
      mergeFigures للقوائم السنوية بالضبط (جمع رقم كل شهر كما هو، من غير افتراض إذا كان الميزان تراكمي أو لا)،
-     عشان الرقمين يكونوا على نفس الأساس المستخدم في باقي القوائم ومفيش ازدواج أو نقص في العد. */
+     عشان الرقمين يكونوا على نفس الأساس المستخدم في باقي القوائم ومفيش ازدواج أو نقص في العد.
+   - نسبة كل عميل من إجمالي المديونية: محسوبة من إجمالي مديونية *كل* العملاء (مش بس اللي ظاهرين في الجدول)،
+     عشان توضح تركّز المخاطرة الحقيقي. */
+function noteForDebtor(ratio, pctOfTotal) {
+  const notes = [];
+  if (ratio === null) notes.push("دين مرحّل من فترة سابقة، بدون مشتريات مسجّلة خلال السنة الحالية");
+  else if (ratio >= 1) notes.push("مديونيته تساوي أو تفوق إجمالي مشترياته خلال السنة — يستحق مراجعة عاجلة");
+  else if (ratio >= 0.8) notes.push("نسبة تحصيل ضعيفة جدًا مقارنة بحجم تعامله");
+  else if (ratio >= 0.4) notes.push("نسبة تحصيل متوسطة — يحتاج متابعة");
+  else notes.push("نسبة تحصيل صحية مقارنة بحجم مشترياته");
+  if (pctOfTotal >= 0.2) notes.push("يمثّل تركّزًا كبيرًا في إجمالي المديونية (خطر تركّز)");
+  else if (pctOfTotal >= 0.1) notes.push("نسبة معتبرة من إجمالي المديونية");
+  return notes.join(" — ");
+}
 function topDebtorsReport(periods, year, topN) {
   const yearPeriods = (periods || []).filter((p) => p.year === year).sort((a, b) => a.month - b.month);
-  if (!yearPeriods.length) return { rows: [], asOfLabel: "", yearLabel: "" };
+  if (!yearPeriods.length) return { rows: [], asOfLabel: "", yearLabel: "", totalDebtAll: 0, totalPurchasesAll: 0, totals: null };
   const latest = yearPeriods[yearPeriods.length - 1];
   const debtByName = {};
   (latest.rows || []).forEach((r) => {
@@ -1188,22 +1201,33 @@ function topDebtorsReport(periods, year, topN) {
       if (r.isCustomer) purchasesByName[r.name] = (purchasesByName[r.name] || 0) + (r.netDebit || 0);
     });
   });
-  const rows = Object.keys(debtByName)
-    .filter((n) => debtByName[n] > 0.004)
+  const allNames = Object.keys(debtByName).filter((n) => debtByName[n] > 0.004);
+  const totalDebtAll = round2(allNames.reduce((s, n) => s + debtByName[n], 0));
+  const totalPurchasesAll = round2(allNames.reduce((s, n) => s + (purchasesByName[n] || 0), 0));
+  const rows = allNames
     .map((name) => {
       const debt = round2(debtByName[name]);
       const purchases = round2(purchasesByName[name] || 0);
       const ratio = purchases > 0.004 ? debt / purchases : null;
-      return { name, debt, purchases, ratio };
+      const pctOfTotal = totalDebtAll > 0.004 ? debt / totalDebtAll : 0;
+      return { name, debt, purchases, ratio, pctOfTotal, note: noteForDebtor(ratio, pctOfTotal) };
     })
     .sort((a, b) => b.debt - a.debt)
     .slice(0, topN || 6);
+  const totals = {
+    debt: round2(rows.reduce((s, r) => s + r.debt, 0)),
+    purchases: round2(rows.reduce((s, r) => s + r.purchases, 0)),
+    pctOfTotal: totalDebtAll > 0.004 ? round2(rows.reduce((s, r) => s + r.debt, 0)) / totalDebtAll : 0,
+  };
   const firstM = MONTH_NAMES[yearPeriods[0].month - 1];
   const lastM = MONTH_NAMES[latest.month - 1];
   return {
     rows,
     asOfLabel: `${lastM} ${latest.year}`,
     yearLabel: yearPeriods.length > 1 ? `${firstM}–${lastM} ${latest.year}` : `${lastM} ${latest.year}`,
+    totalDebtAll,
+    totalPurchasesAll,
+    totals,
   };
 }
 
@@ -1454,17 +1478,19 @@ function balanceSheetSpec(f, companyName, periodLabel) {
 }
 
 function debtorsSheetSpec(periods, year, companyName, topN) {
-  const { rows: data, asOfLabel, yearLabel } = topDebtorsReport(periods, year, topN);
+  const { rows: data, asOfLabel, yearLabel, totalDebtAll, totals } = topDebtorsReport(periods, year, topN);
   const rows = [];
-  brandRows(rows, 5);
-  rows.push({ cells: [{ v: companyName, style: { bg: colorFor("header"), color: "FFFFFFFF", bold: true, sz: 14, align: "center" } }, {}, {}, {}, {}], merge: { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } } });
-  rows.push({ cells: [{ v: `أكبر العملاء مديونية مقارنة بمشترياتهم — المديونية كما في نهاية ${asOfLabel}، المشتريات إجمالي ${yearLabel}`, style: { bg: colorFor("header"), color: "FFFFFFFF", align: "center", wrap: true } }, {}, {}, {}, {}], merge: { s: { r: 1, c: 0 }, e: { r: 1, c: 4 } } });
+  brandRows(rows, 7);
+  rows.push({ cells: [{ v: companyName, style: { bg: colorFor("header"), color: "FFFFFFFF", bold: true, sz: 14, align: "center" } }, {}, {}, {}, {}, {}, {}], merge: { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } } });
+  rows.push({ cells: [{ v: `أكبر العملاء مديونية مقارنة بمشترياتهم — المديونية كما في نهاية ${asOfLabel}، المشتريات إجمالي ${yearLabel}، إجمالي مديونية كل العملاء ${fmt(totalDebtAll)}`, style: { bg: colorFor("header"), color: "FFFFFFFF", align: "center", wrap: true } }, {}, {}, {}, {}, {}, {}], merge: { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } } });
   rows.push({ cells: [
     { v: "م", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true, align: "center" } },
     { v: "العميل", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true } },
     { v: "المديونية الحالية", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true, align: "left" } },
     { v: "إجمالي المشتريات", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true, align: "left" } },
     { v: "مديونية / مشتريات", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true, align: "left" } },
+    { v: "% من إجمالي المديونية", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true, align: "left" } },
+    { v: "ملاحظات", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true } },
   ] });
   data.forEach((r, i) => {
     const ratioColor = r.ratio === null ? "FF8A8271" : r.ratio >= 0.8 ? "FF9C3B34" : r.ratio >= 0.4 ? "FFB7791F" : "FF1E7145";
@@ -1476,15 +1502,27 @@ function debtorsSheetSpec(periods, year, companyName, topN) {
       r.ratio === null
         ? { v: "دين مرحّل", style: { align: "left", color: "FF8A8271" } }
         : { v: r.ratio, t: "n", style: { align: "left", bold: true, color: ratioColor }, z: "0.00%" },
+      { v: r.pctOfTotal, t: "n", style: { align: "left", bold: true }, z: "0.00%" },
+      { v: r.note, style: { wrap: true, sz: 9.5 } },
     ] });
   });
   if (!data.length) {
-    rows.push({ cells: [{ v: "لا توجد فترات مرفوعة لهذه السنة، أو لا يوجد عملاء مدينون.", style: { align: "center", color: "FF8A8271" } }, {}, {}, {}, {}], merge: { s: { r: rows.length, c: 0 }, e: { r: rows.length, c: 4 } } });
+    rows.push({ cells: [{ v: "لا توجد فترات مرفوعة لهذه السنة، أو لا يوجد عملاء مدينون.", style: { align: "center", color: "FF8A8271" } }, {}, {}, {}, {}, {}, {}], merge: { s: { r: rows.length, c: 0 }, e: { r: rows.length, c: 6 } } });
+  } else if (totals) {
+    rows.push({ cells: [
+      { v: "", style: { bg: "FFF4EFE2" } },
+      { v: `إجمالي العملاء المعروضين (${data.length})`, style: { bg: "FFF4EFE2", bold: true } },
+      { v: totals.debt, t: "n", style: { bg: "FFF4EFE2", bold: true, align: "left" } },
+      { v: totals.purchases, t: "n", style: { bg: "FFF4EFE2", bold: true, align: "left" } },
+      { v: "", style: { bg: "FFF4EFE2" } },
+      { v: totals.pctOfTotal, t: "n", style: { bg: "FFF4EFE2", bold: true, align: "left" }, z: "0.00%" },
+      { v: "من إجمالي مديونية كل العملاء", style: { bg: "FFF4EFE2", sz: 9.5 } },
+    ] });
   }
   rows.push({ cells: [] });
-  rows.push({ cells: [{ v: `«مديونية/مشتريات» تقيس أي نسبة مما اشتراه العميل خلال ${yearLabel} لسه متحصّلة. «دين مرحّل» يعني رصيد بدون مشتريات مسجّلة في نفس الفترة.`, style: { wrap: true, color: "FF8A8271", sz: 9.5 } }, {}, {}, {}, {}], merge: { s: { r: rows.length, c: 0 }, e: { r: rows.length, c: 4 } } });
-  brandFooter(rows, 5);
-  return buildSheet(rows, [5, 40, 16, 16, 14]);
+  rows.push({ cells: [{ v: `«مديونية/مشتريات» تقيس أي نسبة مما اشتراه العميل خلال ${yearLabel} لسه متحصّلة. «% من إجمالي المديونية» نسبة كل عميل من إجمالي مديونية كل العملاء (مش بس المعروضين). «دين مرحّل» يعني رصيد بدون مشتريات مسجّلة في نفس الفترة.`, style: { wrap: true, color: "FF8A8271", sz: 9.5 } }, {}, {}, {}, {}, {}, {}], merge: { s: { r: rows.length, c: 0 }, e: { r: rows.length, c: 6 } } });
+  brandFooter(rows, 7);
+  return buildSheet(rows, [5, 34, 15, 15, 13, 13, 42]);
 }
 
 function homeSheetSpec(company, periods, year, annual, latest, zakatDue) {
@@ -2512,7 +2550,7 @@ function PerformanceSummary({ f, periodLabel, companyName, monthCount, zakatDue 
 
 function TopDebtorsReport({ periods, year, companyName, topN, setTopN }) {
   const printId = "print-debtors";
-  const { rows, asOfLabel, yearLabel } = useMemo(() => topDebtorsReport(periods, year, topN), [periods, year, topN]);
+  const { rows, asOfLabel, yearLabel, totalDebtAll, totals } = useMemo(() => topDebtorsReport(periods, year, topN), [periods, year, topN]);
   const ratioColor = (ratio) => {
     if (ratio === null) return "#8a8271";
     if (ratio >= 0.8) return RED_INK;
@@ -2520,16 +2558,16 @@ function TopDebtorsReport({ periods, year, companyName, topN, setTopN }) {
     return GREEN_INK;
   };
   return (
-    <div style={{ maxWidth: 900 }}>
+    <div style={{ maxWidth: 1180 }}>
       {/* التصدير موحّد أعلى القوائم */}
-      <Card style={{ padding: 0, maxWidth: 900, background: "#fff", overflow: "hidden" }}>
+      <Card style={{ padding: 0, maxWidth: 1180, background: "#fff", overflow: "hidden" }}>
         <div id={printId} className="print-area" style={{ background: "#fff", position: "relative" }}>
           <div className="stmt-watermark" />
           <div style={{ background: INK, color: "#fff", textAlign: "center", padding: "14px 10px" }}>
             <div style={{ fontFamily: "'Markazi Text', serif", fontSize: 22, fontWeight: 700 }}>{companyName}</div>
             <div style={{ fontSize: 14, marginTop: 2 }}>أكبر العملاء مديونية مقارنة بمشترياتهم</div>
             <div style={{ fontSize: 10.5, opacity: 0.8, marginTop: 3 }}>
-              المديونية كما في نهاية {asOfLabel} — إجمالي المشتريات خلال {yearLabel}
+              المديونية كما في نهاية {asOfLabel} — إجمالي المشتريات خلال {yearLabel} — إجمالي مديونية كل العملاء: {fmt(totalDebtAll)}
             </div>
           </div>
           <div className="no-print" style={{ padding: "10px 14px", display: "flex", gap: 8, alignItems: "center", borderBottom: `1px solid ${RULE}` }}>
@@ -2541,14 +2579,17 @@ function TopDebtorsReport({ periods, year, companyName, topN, setTopN }) {
               </button>
             ))}
           </div>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
             <thead>
               <tr style={{ background: "#2c3e57", color: "#fff", fontSize: 11.5 }}>
                 <th style={{ padding: "6px 8px", width: 24 }}>م</th>
                 <th style={{ padding: "6px 8px", textAlign: "right" }}>العميل</th>
                 <th style={{ padding: "6px 8px", textAlign: "left", whiteSpace: "nowrap" }}>المديونية الحالية</th>
                 <th style={{ padding: "6px 8px", textAlign: "left", whiteSpace: "nowrap" }}>إجمالي المشتريات</th>
-                <th style={{ padding: "6px 8px", textAlign: "left", width: 100, whiteSpace: "nowrap" }}>مديونية/مشتريات</th>
+                <th style={{ padding: "6px 8px", textAlign: "left", width: 90, whiteSpace: "nowrap" }}>مديونية/مشتريات</th>
+                <th style={{ padding: "6px 8px", textAlign: "left", width: 90, whiteSpace: "nowrap" }}>% من إجمالي المديونية</th>
+                <th style={{ padding: "6px 8px", textAlign: "right", minWidth: 200 }}>ملاحظات</th>
               </tr>
             </thead>
             <tbody>
@@ -2561,17 +2602,31 @@ function TopDebtorsReport({ periods, year, companyName, topN, setTopN }) {
                   <td style={{ padding: "7px 8px", textAlign: "left", direction: "ltr", fontSize: 12.5, fontWeight: 700, whiteSpace: "nowrap", color: ratioColor(r.ratio) }}>
                     {r.ratio === null ? "دين مرحّل" : `${(r.ratio * 100).toFixed(1)}%`}
                   </td>
+                  <td style={{ padding: "7px 8px", textAlign: "left", direction: "ltr", fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap" }}>{(r.pctOfTotal * 100).toFixed(1)}%</td>
+                  <td style={{ padding: "7px 8px", fontSize: 11, color: "#4a4536", lineHeight: 1.6 }}>{r.note}</td>
                 </tr>
               ))}
               {rows.length === 0 && (
-                <tr><td colSpan={5} style={{ padding: 22, textAlign: "center", color: "#847c69", fontSize: 12.5 }}>لا توجد فترات مرفوعة لهذه السنة، أو لا يوجد عملاء مدينون.</td></tr>
+                <tr><td colSpan={7} style={{ padding: 22, textAlign: "center", color: "#847c69", fontSize: 12.5 }}>لا توجد فترات مرفوعة لهذه السنة، أو لا يوجد عملاء مدينون.</td></tr>
+              )}
+              {rows.length > 0 && totals && (
+                <tr style={{ background: "#F4EFE2", fontWeight: 700, borderTop: `2px solid ${INK}` }}>
+                  <td style={{ padding: "8px 8px" }}></td>
+                  <td style={{ padding: "8px 8px", fontSize: 12.5 }}>إجمالي العملاء المعروضين ({rows.length})</td>
+                  <td style={{ padding: "8px 8px", textAlign: "left", direction: "ltr", fontSize: 12.5, whiteSpace: "nowrap" }}>{fmt(totals.debt)}</td>
+                  <td style={{ padding: "8px 8px", textAlign: "left", direction: "ltr", fontSize: 12.5, whiteSpace: "nowrap" }}>{fmt(totals.purchases)}</td>
+                  <td style={{ padding: "8px 8px" }}></td>
+                  <td style={{ padding: "8px 8px", textAlign: "left", direction: "ltr", fontSize: 12.5, whiteSpace: "nowrap" }}>{(totals.pctOfTotal * 100).toFixed(1)}%</td>
+                  <td style={{ padding: "8px 8px", fontSize: 11, color: "#4a4536" }}>من إجمالي مديونية كل العملاء</td>
+                </tr>
               )}
             </tbody>
           </table>
+          </div>
           <div style={{ padding: "10px 14px", fontSize: 10.5, color: "#8a8271", lineHeight: 1.7 }}>
-            «مديونية/مشتريات» تقيس أي نسبة مما اشتراه العميل خلال {yearLabel} لسه متحصّلة. نسبة عالية (فوق 80%) قد
-            تعني تأخر في التحصيل نسبةً لحجم التعامل. «دين مرحّل» يعني رصيد بدون مشتريات مسجّلة في نفس الفترة —
-            على الأغلب مديونية من سنة سابقة.
+            «مديونية/مشتريات» تقيس أي نسبة مما اشتراه العميل خلال {yearLabel} لسه متحصّلة. «% من إجمالي المديونية»
+            تقيس حصة كل عميل من إجمالي مديونية *كل* العملاء (مش بس المعروضين هنا) — نسبة عالية تعني تركّز مخاطرة
+            في عميل واحد. «دين مرحّل» يعني رصيد بدون مشتريات مسجّلة في نفس الفترة — على الأغلب مديونية من سنة سابقة.
           </div>
         </div>
       </Card>
