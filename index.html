@@ -1804,19 +1804,29 @@ function pdfToFile(pdf, fileName) {
   return { file: new File([blob], name, { type: "application/pdf" }), blob, name };
 }
 
-function canShareFiles(file) {
-  try { return !!(navigator.canShare && navigator.canShare({ files: [file] })); }
+function canShareFiles(fileOrFiles) {
+  const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
+  try { return !!(navigator.canShare && navigator.canShare({ files })); }
   catch (e) { return false; }
 }
 
-async function shareFileNow(payload) {
-  if (!payload) return "none";
+async function shareFileNow(payloadOrPayloads) {
+  if (!payloadOrPayloads) return "none";
+  const list = Array.isArray(payloadOrPayloads) ? payloadOrPayloads : [payloadOrPayloads];
+  if (!list.length) return "none";
   try {
-    await navigator.share({ files: [payload.file], title: payload.name.replace(/\.pdf$/, "") });
+    await navigator.share({ files: list.map((p) => p.file), title: list.length === 1 ? list[0].name.replace(/\.pdf$/, "") : `${list.length} ملفات` });
     return "shared";
   } catch (e) {
     if (e && e.name === "AbortError") return "cancelled";
     throw e;
+  }
+}
+
+async function downloadAllNow(payloads) {
+  for (let i = 0; i < payloads.length; i++) {
+    downloadFileNow(payloads[i]);
+    if (i < payloads.length - 1) await new Promise((r) => setTimeout(r, 350));
   }
 }
 
@@ -1903,7 +1913,7 @@ async function buildContHeaderImg(text, land) {
   } finally { box.remove(); }
 }
 
-// يصدّر عدة قوائم في ملف PDF واحد (كل قائمة تبدأ في صفحة جديدة)
+// يصدّر عدة قوائم — كل قائمة في ملف PDF منفصل عن التانية (مش كلهم في ملف واحد)
 async function exportMultiPdf({ items, fileName }) {
   await loadScript("https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js");
   await loadScript("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js");
@@ -1913,7 +1923,7 @@ async function exportMultiPdf({ items, fileName }) {
   document.body.appendChild(host);
   const root = ReactDOM.createRoot(host);
   const jsPDF = window.jspdf.jsPDF;
-  let pdf = null;
+  const payloads = [];
   try {
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
@@ -1925,19 +1935,16 @@ async function exportMultiPdf({ items, fileName }) {
       const canvas = await window.html2canvas(target, { scale: 2, backgroundColor: "#FFFFFF", useCORS: true });
       target.classList.remove("export-land", "export-wide");
       const contImg = await buildContHeaderImg(it.title || fileName || "تقرير", !!it.landscape);
-      if (!pdf) {
-        pdf = new jsPDF({ orientation: it.landscape ? "landscape" : "portrait", unit: "mm", format: "a4" });
-        addCanvasPages(pdf, canvas, contImg, !!it.landscape, true);
-      } else {
-        addCanvasPages(pdf, canvas, contImg, !!it.landscape, false);
-      }
+      const pdf = new jsPDF({ orientation: it.landscape ? "landscape" : "portrait", unit: "mm", format: "a4" });
+      addCanvasPages(pdf, canvas, contImg, !!it.landscape, true);
+      payloads.push(pdfToFile(pdf, it.title || `${fileName || "تقرير"} ${i + 1}`));
     }
   } finally {
     try { root.unmount(); } catch (e) {}
     host.remove();
   }
-  if (!pdf) throw new Error("لم يتم تجهيز أي قائمة للتصدير");
-  return pdfToFile(pdf, fileName);
+  if (!payloads.length) throw new Error("لم يتم تجهيز أي قائمة للتصدير");
+  return payloads;
 }
 
 async function exportStatementPdf({ targetId, fileName, companyName, title, orientation }) {
@@ -1992,7 +1999,7 @@ function ExportBtns({ companyName, exportData, availableMonths, pdfTarget, pdfNa
     setBusyPdf(true);
     try {
       const payload = await exportStatementPdf({ targetId: pdfTarget, fileName: pdfName, companyName, title: `${companyName} — ${pdfName}`, orientation: pdfLandscape ? "landscape" : "portrait" });
-      if (payload) setReady(payload);
+      if (payload) setReady([payload]);
     } catch (e) { alert("تعذّر تصدير PDF: " + e.message); }
     setBusyPdf(false);
   };
@@ -2003,9 +2010,9 @@ function ExportBtns({ companyName, exportData, availableMonths, pdfTarget, pdfNa
     try {
       const items = buildPdfItems(which, pdfMonthSel);
       if (!items.length) { alert("لا توجد بيانات للقوائم المختارة."); setBusyPdf(false); return; }
-      const payload = await exportMultiPdf({ items, fileName: `${companyName} — القوائم المالية` });
+      const payloads = await exportMultiPdf({ items, fileName: `${companyName} — القوائم المالية` });
       setPdfOpen(false);
-      setReady(payload);
+      setReady(payloads);
     } catch (e) { alert("تعذّر تصدير PDF: " + e.message); }
     setBusyPdf(false);
   };
@@ -2021,27 +2028,35 @@ function ExportBtns({ companyName, exportData, availableMonths, pdfTarget, pdfNa
     <div style={{ position: "relative", display: "flex", gap: 8, flexWrap: "wrap" }}>
       <GhostBtn icon={FileSpreadsheet} onClick={() => setOpen(!open)}>تصدير Excel</GhostBtn>
       {buildPdfItems && <GhostBtn icon={ScrollText} onClick={() => setPdfOpen(!pdfOpen)}>{busyPdf ? "جارِ…" : "تصدير PDF"}</GhostBtn>}
-      {ready && (
+      {ready && ready.length > 0 && (
         <Modal onClose={() => setReady(null)}>
           <div style={{ textAlign: "center" }}>
             <div style={{ fontSize: 34, marginBottom: 6 }}>✅</div>
-            <div style={{ fontWeight: 700, fontSize: 15, color: INK, marginBottom: 4 }}>الملف جاهز</div>
-            <div style={{ fontSize: 11.5, color: "#8a8271", marginBottom: 16, wordBreak: "break-word" }}>{ready.name}</div>
+            <div style={{ fontWeight: 700, fontSize: 15, color: INK, marginBottom: 4 }}>
+              {ready.length === 1 ? "الملف جاهز" : `${ready.length} ملفات جاهزة`}
+            </div>
+            <div style={{ fontSize: 11.5, color: "#8a8271", marginBottom: 16, textAlign: "right" }}>
+              {ready.map((p, i) => (<div key={i} style={{ wordBreak: "break-word", padding: "2px 0" }}>• {p.name}</div>))}
+            </div>
           </div>
-          {canShareFiles(ready.file) ? (
+          {canShareFiles(ready.map((p) => p.file)) ? (
             <>
               <PrimaryBtn icon={Check} style={{ width: "100%", marginBottom: 8 }}
                 onClick={async () => {
                   try { const r = await shareFileNow(ready); if (r === "shared") setReady(null); }
-                  catch (e) { alert("تعذّرت المشاركة، هيتم التحميل بدلاً منها."); downloadFileNow(ready); setReady(null); }
+                  catch (e) { alert("تعذّرت المشاركة، هيتم التحميل بدلاً منها."); await downloadAllNow(ready); setReady(null); }
                 }}>
-                📤 إرسال (واتساب وغيره)
+                📤 {ready.length === 1 ? "إرسال (واتساب وغيره)" : `إرسال الكل (${ready.length}) دفعة واحدة`}
               </PrimaryBtn>
-              <GhostBtn style={{ width: "100%" }} onClick={() => { downloadFileNow(ready); setReady(null); }}>تحميل على الجهاز</GhostBtn>
+              <GhostBtn style={{ width: "100%" }} onClick={async () => { await downloadAllNow(ready); setReady(null); }}>
+                {ready.length === 1 ? "تحميل على الجهاز" : "تحميل الكل على الجهاز"}
+              </GhostBtn>
             </>
           ) : (
             <>
-              <PrimaryBtn icon={Check} style={{ width: "100%", marginBottom: 8 }} onClick={() => { downloadFileNow(ready); setReady(null); }}>تحميل الملف</PrimaryBtn>
+              <PrimaryBtn icon={Check} style={{ width: "100%", marginBottom: 8 }} onClick={async () => { await downloadAllNow(ready); setReady(null); }}>
+                {ready.length === 1 ? "تحميل الملف" : `تحميل الملفات (${ready.length})`}
+              </PrimaryBtn>
               <div style={{ fontSize: 11, color: "#8a8271", textAlign: "center", lineHeight: 1.7 }}>
                 المتصفح ده مبيدعمش الإرسال المباشر. حمّل الملف وابعته من مجلد التنزيلات، أو افتح التطبيق من متصفح كروم على الموبايل.
               </div>
@@ -4515,7 +4530,7 @@ function MainApp({ user, biometric }) {
               <ExportBtns
                 companyName={active.name}
                 pdfTarget={{ home: "print-home", income_monthly: "print-income", income_annual: "print-income", balance: "print-balance", equity: "print-equity", debtors_top: "print-debtors", trial: "print-trial" }[stmtTab] || null}
-                pdfLandscape={stmtTab === "home" || stmtTab === "trial"}
+                pdfLandscape={stmtTab === "home" || stmtTab === "trial" || stmtTab === "debtors_top"}
                 buildPdfItems={(which, monthId) => {
                   const p = monthId ? sortedPeriods.find((x) => x.id === monthId) : activePeriod;
                   const mLabel = p ? `${MONTH_NAMES[p.month - 1]} ${p.year}` : "";
@@ -4539,7 +4554,7 @@ function MainApp({ user, biometric }) {
                     element: <BalanceSheet f={bFig} periodLabel={`كما في نهاية ${mLabel}`} companyName={active.name} readOnly />,
                   });
                   if (which.includes("debtors_top")) items.push({
-                    landscape: false, title: `${active.name} — أكبر العملاء مديونية ${selectedYear}`,
+                    landscape: true, title: `${active.name} — أكبر العملاء مديونية ${selectedYear}`,
                     element: <TopDebtorsReport periods={sortedPeriods} year={selectedYear} companyName={active.name} topN={topDebtorsN} setTopN={() => {}} />,
                   });
                   if (which.includes("trial") && p) items.push({
