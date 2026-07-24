@@ -1998,7 +1998,7 @@ function ExportBtns({ companyName, exportData, availableMonths, pdfTarget, pdfNa
   const doPdfSingle = async () => {
     setBusyPdf(true);
     try {
-      const payload = await exportStatementPdf({ targetId: pdfTarget, fileName: pdfName, companyName, title: `${companyName} — ${pdfName}`, orientation: pdfLandscape ? "landscape" : "portrait" });
+      const payload = await exportStatementPdf({ targetId: pdfTarget, fileName: pdfName, companyName, title: pdfName, orientation: pdfLandscape ? "landscape" : "portrait" });
       if (payload) setReady([payload]);
     } catch (e) { alert("تعذّر تصدير PDF: " + e.message); }
     setBusyPdf(false);
@@ -3462,7 +3462,7 @@ function ZakatModule({ data, setData, readOnly, savedClass, companyName }) {
             <GhostBtn icon={ScrollText} onClick={async () => {
               if (zView !== "statement") { setZView("statement"); await new Promise((r) => setTimeout(r, 350)); }
               try {
-                const payload = await exportStatementPdf({ targetId: "print-zakat", fileName: companyName ? `${companyName} - حساب الزكاة` : "حساب الزكاة", companyName: companyName || "", title: `${companyName ? companyName + " — " : ""}حساب الزكاة` });
+                const payload = await exportStatementPdf({ targetId: "print-zakat", fileName: companyName ? `حساب الزكاة لشركة ${companyName}` : "حساب الزكاة", companyName: companyName || "", title: companyName ? `حساب الزكاة لشركة ${companyName}` : "حساب الزكاة" });
                 if (payload) setZakatPdf(payload);
               } catch (e) { alert("تعذّر تصدير PDF: " + e.message); }
             }}>تصدير PDF</GhostBtn>
@@ -4538,44 +4538,44 @@ function MainApp({ user, biometric }) {
                   const bFig = p ? balanceFiguresOf(p) : null;
                   const items = [];
                   if (which.includes("home")) items.push({
-                    landscape: true, title: `${active.name} — لوحة القيادة ${selectedYear}`,
+                    landscape: true, title: `لوحة القيادة ${selectedYear} لشركة ${active.name}`,
                     element: <HomeDashboard company={active} periods={sortedPeriods} year={selectedYear} setYear={() => {}} availableYears={availableYears.length ? availableYears : [selectedYear]} zakatDue={computeZakatTotal(active.zakat)} />,
                   });
                   if (which.includes("income_monthly") && mFig) items.push({
-                    landscape: false, title: `${active.name} — قائمة الدخل ${mLabel}`,
+                    landscape: false, title: `قائمة دخل شهر ${mLabel} لشركة ${active.name}`,
                     element: <DetailedIncomeStatement f={mFig} title="قائمة الدخل الشهرية" periodLabel={mLabel} sourceLabel={`من واقع ميزان مراجعة شهر ${mLabel}`} companyName={active.name} />,
                   });
                   if (which.includes("income_annual") && annualFigures) items.push({
-                    landscape: false, title: `${active.name} — قائمة الدخل السنوية ${selectedYear}`,
+                    landscape: false, title: `قائمة الدخل السنوي ${selectedYear} لشركة ${active.name}`,
                     element: <DetailedIncomeStatement f={annualFigures} title="قائمة الدخل السنوية" periodLabel={annualPeriodLabel} sourceLabel={annualSourceLabel} companyName={active.name} partners={partners} />,
                   });
                   if (which.includes("balance") && bFig) items.push({
-                    landscape: false, title: `${active.name} — المركز المالي ${mLabel}`,
+                    landscape: false, title: `المركز المالي شهر ${mLabel} لشركة ${active.name}`,
                     element: <BalanceSheet f={bFig} periodLabel={`كما في نهاية ${mLabel}`} companyName={active.name} readOnly />,
                   });
                   if (which.includes("debtors_top")) items.push({
-                    landscape: false, title: `${active.name} — أكبر العملاء مديونية ${selectedYear}`,
+                    landscape: false, title: `أكبر العملاء مديونية ${selectedYear} لشركة ${active.name}`,
                     element: <TopDebtorsReport periods={sortedPeriods} year={selectedYear} companyName={active.name} topN={topDebtorsN} setTopN={() => {}} />,
                   });
                   if (which.includes("trial") && p) items.push({
-                    landscape: true, title: `${active.name} — ميزان المراجعة ${mLabel}`,
+                    landscape: true, title: `ميزان المراجعة شهر ${mLabel} لشركة ${active.name}`,
                     element: <TrialBalanceView rows={p.rows} periodLabel={mLabel} companyName={active.name} readOnly />,
                   });
                   if (which.includes("zakat") && active.zakat && active.zakat.rows) items.push({
-                    landscape: false, title: `${active.name} — حساب الزكاة`,
+                    landscape: false, title: `حساب الزكاة لشركة ${active.name}`,
                     element: <ZakatModule data={active.zakat} setData={() => {}} readOnly savedClass={savedClass} companyName={active.name} />,
                   });
                   return items;
                 }}
                 pdfName={
-                  stmtTab === "home" ? `${active.name} - لوحة القيادة ${selectedYear}`
-                  : stmtTab === "income_monthly" ? `${active.name} - قائمة الدخل - ${activePeriod ? MONTH_NAMES[activePeriod.month - 1] + " " + activePeriod.year : ""}`
-                  : stmtTab === "income_annual" ? `${active.name} - قائمة الدخل السنوية - ${selectedYear}`
-                  : stmtTab === "balance" ? `${active.name} - المركز المالي - ${activePeriod ? MONTH_NAMES[activePeriod.month - 1] + " " + activePeriod.year : ""}`
-                  : stmtTab === "equity" ? `${active.name} - التغير في حقوق الملكية - ${activePeriod ? MONTH_NAMES[activePeriod.month - 1] + " " + activePeriod.year : ""}`
-                  : stmtTab === "debtors_top" ? `${active.name} - أكبر العملاء مديونية - ${selectedYear}`
-                  : stmtTab === "trial" ? `${active.name} - ميزان المراجعة - ${activePeriod ? MONTH_NAMES[activePeriod.month - 1] + " " + activePeriod.year : ""}`
-                  : `${active.name} - تقرير`
+                  stmtTab === "home" ? `لوحة القيادة ${selectedYear} لشركة ${active.name}`
+                  : stmtTab === "income_monthly" ? `قائمة دخل شهر ${activePeriod ? MONTH_NAMES[activePeriod.month - 1] + " " + activePeriod.year : ""} لشركة ${active.name}`
+                  : stmtTab === "income_annual" ? `قائمة الدخل السنوي ${selectedYear} لشركة ${active.name}`
+                  : stmtTab === "balance" ? `المركز المالي شهر ${activePeriod ? MONTH_NAMES[activePeriod.month - 1] + " " + activePeriod.year : ""} لشركة ${active.name}`
+                  : stmtTab === "equity" ? `التغير في حقوق الملكية شهر ${activePeriod ? MONTH_NAMES[activePeriod.month - 1] + " " + activePeriod.year : ""} لشركة ${active.name}`
+                  : stmtTab === "debtors_top" ? `أكبر العملاء مديونية ${selectedYear} لشركة ${active.name}`
+                  : stmtTab === "trial" ? `ميزان المراجعة شهر ${activePeriod ? MONTH_NAMES[activePeriod.month - 1] + " " + activePeriod.year : ""} لشركة ${active.name}`
+                  : `تقرير لشركة ${active.name}`
                 }
                 availableMonths={sortedPeriods.map((p) => ({ id: p.id, label: `${MONTH_NAMES[p.month - 1]} ${p.year}` }))}
                 exportData={(which, monthSel) => {
