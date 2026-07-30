@@ -1493,8 +1493,8 @@ function debtorsSheetSpec(periods, year, companyName, topN) {
   rows.push({ cells: [
     { v: "م", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true, align: "center" } },
     { v: "العميل", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true } },
-    { v: "المديونية الحالية", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true, align: "left" } },
     { v: "إجمالي المشتريات", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true, align: "left" } },
+    { v: "المديونية الحالية", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true, align: "left" } },
     { v: "مديونية / مشتريات", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true, align: "left" } },
     { v: "% من إجمالي المديونية", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true, align: "left" } },
     { v: "ملاحظات", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true } },
@@ -1504,8 +1504,8 @@ function debtorsSheetSpec(periods, year, companyName, topN) {
     rows.push({ cells: [
       { v: i + 1, style: { align: "center", color: "FF8A8271" } },
       { v: r.name, style: { wrap: true } },
-      { v: r.debt, t: "n", style: { align: "left" } },
       { v: r.purchases, t: "n", style: { align: "left" } },
+      { v: r.debt, t: "n", style: { align: "left" } },
       r.ratio === null
         ? { v: "دين مرحّل", style: { align: "left", color: "FF8A8271" } }
         : { v: r.ratio, t: "n", style: { align: "left", bold: true, color: ratioColor }, z: "0.00%" },
@@ -1519,8 +1519,8 @@ function debtorsSheetSpec(periods, year, companyName, topN) {
     rows.push({ cells: [
       { v: "", style: { bg: "FFF4EFE2" } },
       { v: `إجمالي العملاء المعروضين (${data.length})`, style: { bg: "FFF4EFE2", bold: true } },
-      { v: totals.debt, t: "n", style: { bg: "FFF4EFE2", bold: true, align: "left" } },
       { v: totals.purchases, t: "n", style: { bg: "FFF4EFE2", bold: true, align: "left" } },
+      { v: totals.debt, t: "n", style: { bg: "FFF4EFE2", bold: true, align: "left" } },
       { v: "", style: { bg: "FFF4EFE2" } },
       { v: totals.pctOfTotal, t: "n", style: { bg: "FFF4EFE2", bold: true, align: "left" }, z: "0.00%" },
       { v: "من إجمالي مديونية كل العملاء", style: { bg: "FFF4EFE2", sz: 9.5 } },
@@ -2603,28 +2603,28 @@ function TopDebtorsReport({ periods, year, companyName, topN, setTopN }) {
           </div>
           <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
             <thead>
-              <tr style={{ background: "#2c3e57", color: "#fff", fontSize: 11.5 }}>
-                <th style={{ padding: "6px 6px", width: 22 }}>م</th>
-                <th style={{ padding: "6px 6px", textAlign: "right", width: "16%" }}>العميل</th>
-                <th style={{ padding: "6px 6px", textAlign: "left", width: "13%" }}>المديونية الحالية</th>
-                <th style={{ padding: "6px 6px", textAlign: "left", width: "13%" }}>إجمالي المشتريات</th>
-                <th style={{ padding: "6px 6px", textAlign: "left", width: "11%" }}>مديونية/مشتريات</th>
-                <th style={{ padding: "6px 6px", textAlign: "left", width: "11%" }}>% من إجمالي المديونية</th>
-                <th style={{ padding: "6px 6px", textAlign: "right" }}>ملاحظات</th>
+              <tr style={{ background: "#2c3e57", color: "#fff", fontSize: 10.5 }}>
+                <th style={{ padding: "5px 5px", width: 20 }}>م</th>
+                <th style={{ padding: "5px 5px", textAlign: "right", width: "15%" }}>العميل</th>
+                <th style={{ padding: "5px 5px", textAlign: "left", width: "12%" }}>إجمالي المشتريات</th>
+                <th style={{ padding: "5px 5px", textAlign: "left", width: "12%" }}>المديونية الحالية</th>
+                <th style={{ padding: "5px 5px", textAlign: "left", width: "10%" }}>مديونية/مشتريات</th>
+                <th style={{ padding: "5px 5px", textAlign: "left", width: "10%" }}>% من إجمالي المديونية</th>
+                <th style={{ padding: "5px 5px", textAlign: "right" }}>ملاحظات</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r, i) => (
                 <tr key={i} style={{ borderBottom: "1px solid #e6e1d4", background: i % 2 ? "#fbf9f4" : "#fff" }}>
-                  <td style={{ padding: "7px 6px", width: 22, color: "#8a8271", fontSize: 10.5, textAlign: "center" }}>{i + 1}</td>
-                  <td style={{ padding: "7px 6px", fontSize: 11.5, wordBreak: "break-word" }}>{r.name}</td>
-                  <td style={{ padding: "7px 6px", textAlign: "left", direction: "ltr", fontSize: 11.5 }}>{fmt(r.debt)}</td>
-                  <td style={{ padding: "7px 6px", textAlign: "left", direction: "ltr", fontSize: 11.5 }}>{fmt(r.purchases)}</td>
-                  <td style={{ padding: "7px 6px", textAlign: "left", direction: "ltr", fontSize: 11.5, fontWeight: 700, color: ratioColor(r.ratio) }}>
+                  <td style={{ padding: "6px 5px", width: 20, color: "#8a8271", fontSize: 9.5, textAlign: "center" }}>{i + 1}</td>
+                  <td style={{ padding: "6px 5px", fontSize: 10, wordBreak: "break-word" }}>{r.name}</td>
+                  <td style={{ padding: "6px 5px", textAlign: "left", direction: "ltr", fontSize: 10 }}>{fmt(r.purchases)}</td>
+                  <td style={{ padding: "6px 5px", textAlign: "left", direction: "ltr", fontSize: 10 }}>{fmt(r.debt)}</td>
+                  <td style={{ padding: "6px 5px", textAlign: "left", direction: "ltr", fontSize: 10, fontWeight: 700, color: ratioColor(r.ratio) }}>
                     {r.ratio === null ? "دين مرحّل" : `${(r.ratio * 100).toFixed(1)}%`}
                   </td>
-                  <td style={{ padding: "7px 6px", textAlign: "left", direction: "ltr", fontSize: 11.5, fontWeight: 600 }}>{(r.pctOfTotal * 100).toFixed(1)}%</td>
-                  <td style={{ padding: "7px 6px", fontSize: 10.5, color: "#4a4536", lineHeight: 1.5, wordBreak: "break-word" }}>{r.note}</td>
+                  <td style={{ padding: "6px 5px", textAlign: "left", direction: "ltr", fontSize: 10, fontWeight: 600 }}>{(r.pctOfTotal * 100).toFixed(1)}%</td>
+                  <td style={{ padding: "6px 5px", fontSize: 9, color: "#4a4536", lineHeight: 1.45, wordBreak: "break-word" }}>{r.note}</td>
                 </tr>
               ))}
               {rows.length === 0 && (
@@ -2632,13 +2632,13 @@ function TopDebtorsReport({ periods, year, companyName, topN, setTopN }) {
               )}
               {rows.length > 0 && totals && (
                 <tr style={{ background: "#F4EFE2", fontWeight: 700, borderTop: `2px solid ${INK}` }}>
-                  <td style={{ padding: "8px 6px" }}></td>
-                  <td style={{ padding: "8px 6px", fontSize: 11.5 }}>إجمالي العملاء المعروضين ({rows.length})</td>
-                  <td style={{ padding: "8px 6px", textAlign: "left", direction: "ltr", fontSize: 11.5 }}>{fmt(totals.debt)}</td>
-                  <td style={{ padding: "8px 6px", textAlign: "left", direction: "ltr", fontSize: 11.5 }}>{fmt(totals.purchases)}</td>
-                  <td style={{ padding: "8px 6px" }}></td>
-                  <td style={{ padding: "8px 6px", textAlign: "left", direction: "ltr", fontSize: 11.5 }}>{(totals.pctOfTotal * 100).toFixed(1)}%</td>
-                  <td style={{ padding: "8px 6px", fontSize: 10.5, color: "#4a4536" }}>من إجمالي مديونية كل العملاء</td>
+                  <td style={{ padding: "7px 5px" }}></td>
+                  <td style={{ padding: "7px 5px", fontSize: 10 }}>إجمالي العملاء المعروضين ({rows.length})</td>
+                  <td style={{ padding: "7px 5px", textAlign: "left", direction: "ltr", fontSize: 10 }}>{fmt(totals.purchases)}</td>
+                  <td style={{ padding: "7px 5px", textAlign: "left", direction: "ltr", fontSize: 10 }}>{fmt(totals.debt)}</td>
+                  <td style={{ padding: "7px 5px" }}></td>
+                  <td style={{ padding: "7px 5px", textAlign: "left", direction: "ltr", fontSize: 10 }}>{(totals.pctOfTotal * 100).toFixed(1)}%</td>
+                  <td style={{ padding: "7px 5px", fontSize: 9, color: "#4a4536" }}>من إجمالي مديونية كل العملاء</td>
                 </tr>
               )}
             </tbody>
@@ -2659,7 +2659,7 @@ function TopDebtorsReport({ periods, year, companyName, topN, setTopN }) {
 
 const MONTH_NAMES = ["يناير", "فبراير", "مارس", "ابريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
 
-function KpiCard({ label, value, isRatio, emoji, tone }) {
+function KpiCard({ label, value, isRatio, emoji, tone, compact }) {
   const tones = {
     navy: { bg: "#132340", fg: "#fff", sub: "rgba(255,255,255,0.72)", val: "#fff" },
     teal: { bg: "#2c3e57", fg: "#fff", sub: "rgba(255,255,255,0.70)", val: "#fff" },
@@ -2669,9 +2669,9 @@ function KpiCard({ label, value, isRatio, emoji, tone }) {
   };
   const t = tones[tone] || tones.sky;
   return (
-    <div style={{ background: t.bg, border: `1px solid ${tone ? "transparent" : RULE}`, borderRadius: 10, padding: "10px 9px", minWidth: 0, boxShadow: tone && tone !== "sky" ? "0 2px 6px rgba(0,0,0,0.12)" : "none" }}>
-      <div style={{ fontSize: 10, color: t.sub, marginBottom: 5, lineHeight: 1.3, wordBreak: "break-word", fontWeight: 600 }}>{emoji ? emoji + " " : ""}{label}</div>
-      <div style={{ fontFamily: "'Markazi Text', serif", fontSize: 20, fontWeight: 700, color: t.val, direction: "ltr", textAlign: "right", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", letterSpacing: "-0.2px" }}>
+    <div style={{ background: t.bg, border: `1px solid ${tone ? "transparent" : RULE}`, borderRadius: compact ? 8 : 10, padding: compact ? "7px 6px" : "10px 9px", minWidth: 0, boxShadow: tone && tone !== "sky" ? "0 2px 6px rgba(0,0,0,0.12)" : "none" }}>
+      <div style={{ fontSize: compact ? 8.5 : 10, color: t.sub, marginBottom: compact ? 3 : 5, lineHeight: 1.25, wordBreak: "break-word", fontWeight: 600 }}>{emoji ? emoji + " " : ""}{label}</div>
+      <div style={{ fontFamily: "'Markazi Text', serif", fontSize: compact ? 14 : 20, fontWeight: 700, color: t.val, direction: "ltr", textAlign: "right", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", letterSpacing: "-0.2px" }}>
         {isRatio ? `${(value * 100).toFixed(1)}%` : fmt(value)}
       </div>
     </div>
@@ -2748,13 +2748,13 @@ function HomeDashboard({ company, periods, year, setYear, availableYears, zakatD
         {latest && (
           <>
             <div style={{ fontWeight: 700, color: GOLD, marginBottom: 8, fontSize: 13.5 }}>أرصدة وإجماليات الحسابات — كما في آخر فترة مرفوعة</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 7, marginBottom: 18 }}>
-              <KpiCard label="الخزائن والنقدية" value={latest.cash} emoji="🏦" tone="sky" />
-              <KpiCard label="مديونية العملاء" value={latest.customerDebt} emoji="📥" tone="sky" />
-              <KpiCard label="دفعات مقدمة من العملاء" value={latest.customerPrepaid} emoji="📤" tone="sky" />
-              <KpiCard label="مديونية الموردين" value={latest.supplierDebt} emoji="📤" tone="sky" />
-              <KpiCard label="دفعات مقدمة للموردين" value={latest.supplierPrepaid} emoji="📥" tone="sky" />
-              <KpiCard label="المخزون" value={latest.closingInventory} emoji="📦" tone="sky" />
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 5, marginBottom: 18 }}>
+              <KpiCard label="الخزائن والنقدية" value={latest.cash} emoji="🏦" tone="sky" compact />
+              <KpiCard label="مديونية العملاء" value={latest.customerDebt} emoji="📥" tone="sky" compact />
+              <KpiCard label="دفعات مقدمة من العملاء" value={latest.customerPrepaid} emoji="📤" tone="sky" compact />
+              <KpiCard label="مديونية الموردين" value={latest.supplierDebt} emoji="📤" tone="sky" compact />
+              <KpiCard label="دفعات مقدمة للموردين" value={latest.supplierPrepaid} emoji="📥" tone="sky" compact />
+              <KpiCard label="المخزون" value={latest.closingInventory} emoji="📦" tone="sky" compact />
             </div>
           </>
         )}
@@ -3963,6 +3963,14 @@ function MainApp({ user, biometric }) {
 
   // ===== تعديل تصنيف حساب من داخل القوائم =====
   const GROUP_TO_CAT = { cash: "asset_current", receivables: "asset_current", debtors: "asset_current", inventory: "asset_current", noncurrent: "asset_noncurrent", creditors: "liability_current", equity: "equity", ignore: "ignore" };
+  const subtypeFor = (r, group) => {
+    // نحافظ على تصنيف عميل/مورد الطبيعي حتى لو المستخدم نقل الحساب يدويًا لمجموعة تانية —
+    // غير كده الحساب بيختفي من إجمالي «ذمم العملاء المدينة» أو «موردون» ويظهر كسطر منفصل وحده
+    const debitNature = (r.debit || 0) >= (r.credit || 0);
+    if (r.isCustomer) return debitNature ? "customer_debt" : "customer_prepaid";
+    if (r.isSupplier) return debitNature ? "supplier_prepaid" : "supplier_debt";
+    return null;
+  };
   const reclassifyAccount = async (accountName, group, applyAll = true) => {
     if (readOnly || !activeId) return;
     const cat = GROUP_TO_CAT[group];
@@ -3974,7 +3982,7 @@ function MainApp({ user, biometric }) {
       for (let i = 0; i < affected.length; i += 50) {
         const batch = db.batch();
         affected.slice(i, i + 50).forEach((p) => {
-          const rows2 = p.rows.map((r) => (r.name === accountName ? { ...r, category: cat, bsGroup: group === "ignore" ? null : group, subtype: null } : r));
+          const rows2 = p.rows.map((r) => (r.name === accountName ? { ...r, category: cat, bsGroup: group === "ignore" ? null : group, subtype: subtypeFor(r, group) } : r));
           batch.update(col.doc(p.id), { rows: rows2 });
         });
         await batch.commit();
@@ -3999,7 +4007,7 @@ function MainApp({ user, biometric }) {
         targets.slice(i, i + 50).forEach((p) => {
           const rows2 = p.rows.map((r) => {
             const match = applyAll ? r.name === row.name : r.id === row.id;
-            return match ? { ...r, category: newCat || null, bsGroup: null, subtype: null } : r;
+            return match ? { ...r, category: newCat || null, bsGroup: null, subtype: newCat === "asset_current" || newCat === "liability_current" ? subtypeFor(r, null) : null } : r;
           });
           batch.update(col.doc(p.id), { rows: rows2 });
         });
@@ -4530,7 +4538,7 @@ function MainApp({ user, biometric }) {
               <ExportBtns
                 companyName={active.name}
                 pdfTarget={{ home: "print-home", income_monthly: "print-income", income_annual: "print-income", balance: "print-balance", equity: "print-equity", debtors_top: "print-debtors", trial: "print-trial" }[stmtTab] || null}
-                pdfLandscape={stmtTab === "home" || stmtTab === "trial"}
+                pdfLandscape={stmtTab === "home" || stmtTab === "trial" || stmtTab === "debtors_top"}
                 buildPdfItems={(which, monthId) => {
                   const p = monthId ? sortedPeriods.find((x) => x.id === monthId) : activePeriod;
                   const mLabel = p ? `${MONTH_NAMES[p.month - 1]} ${p.year}` : "";
@@ -4554,7 +4562,7 @@ function MainApp({ user, biometric }) {
                     element: <BalanceSheet f={bFig} periodLabel={`كما في نهاية ${mLabel}`} companyName={active.name} readOnly />,
                   });
                   if (which.includes("debtors_top")) items.push({
-                    landscape: false, title: `أكبر العملاء مديونية ${selectedYear} لشركة ${active.name}`,
+                    landscape: true, title: `أكبر العملاء مديونية ${selectedYear} لشركة ${active.name}`,
                     element: <TopDebtorsReport periods={sortedPeriods} year={selectedYear} companyName={active.name} topN={topDebtorsN} setTopN={() => {}} />,
                   });
                   if (which.includes("trial") && p) items.push({
