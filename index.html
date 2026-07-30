@@ -1072,9 +1072,9 @@ function computeFigures(rows, openingInventory) {
   // المدينون: العملاء مجمّعين سطر واحد + دفعات مقدمة للموردين + باقي المدينين بالتفصيل
   const otherDebtorRows = assetCurrentRows.filter((r) => {
     const ov = ovOf(r.name);
-    if (ov) return ov === "debtors";
     const src = srcRows.find((s) => s.name === r.name);
     if (src && (src.subtype === "customer_debt" || src.subtype === "supplier_prepaid")) return false;
+    if (ov) return ov === "debtors";
     if (isCashName(r.name)) return false;
     if (inv.test(r.name)) return false;
     return true;
@@ -1082,7 +1082,14 @@ function computeFigures(rows, openingInventory) {
   const receivablesGroup = [];
   if (customerDebt > 0.004) receivablesGroup.push({ name: "ذمم العملاء المدينة (مستحق على العملاء)", amount: customerDebt });
   if (supplierPrepaid > 0.004) receivablesGroup.push({ name: "دفعات مقدمة للموردين (أرصدة موردين مدينة)", amount: supplierPrepaid });
-  assetCurrentRows.filter((r) => ovOf(r.name) === "receivables").forEach((r) => {
+  assetCurrentRows.filter((r) => {
+    if (ovOf(r.name) !== "receivables") return false;
+    // لو الحساب عميل/مورد بطبيعته وبيتجمّع أصلاً في «ذمم العملاء»/«دفعات مقدمة للموردين» أعلاه،
+    // منعرضوش تاني كسطر منفصل — غير كده بيتكرر ظهوره (مرة جوه الإجمالي ومرة سطر لوحده)
+    const src = srcRows.find((s) => s.name === r.name);
+    if (src && (src.subtype === "customer_debt" || src.subtype === "customer_prepaid" || src.subtype === "supplier_prepaid")) return false;
+    return true;
+  }).forEach((r) => {
     if (Math.abs(r.amount) > 0.004) receivablesGroup.push({ name: r.name, amount: r.amount });
   });
   const debtorsGroup = otherDebtorRows.slice();
@@ -1091,9 +1098,11 @@ function computeFigures(rows, openingInventory) {
   // الخصوم المتداولة
   const otherCreditorRows = liabilityCurrentRows.filter((r) => {
     const ov = ovOf(r.name);
-    if (ov) return ov === "creditors";
     const src = srcRows.find((s) => s.name === r.name);
+    // لو الحساب متجمّع أصلاً في «موردون»/«دفعات مقدمة من العملاء» (subtype)، منعرضوش سطر منفصل
+    // مهما كانت قيمة bsGroup — غير كده بيتكرر ظهوره
     if (src && (src.subtype === "supplier_debt" || src.subtype === "customer_prepaid")) return false;
+    if (ov) return ov === "creditors";
     return true;
   }).map((r) => ({ name: r.name, amount: r.amount })).filter((r) => Math.abs(r.amount) > 0.004);
   const creditorsGroup = [];
