@@ -1198,7 +1198,8 @@ function topDebtorsReport(periods, year, topN) {
   const purchasesByName = {};
   yearPeriods.forEach((p) => {
     (p.rows || []).forEach((r) => {
-      if (r.isCustomer) purchasesByName[r.name] = (purchasesByName[r.name] || 0) + (r.netDebit || 0);
+      const isCust = r.isCustomer || r.subtype === "customer_debt" || r.subtype === "customer_prepaid";
+      if (isCust) purchasesByName[r.name] = (purchasesByName[r.name] || 0) + (r.netDebit || 0);
     });
   });
   const allNames = Object.keys(debtByName).filter((n) => debtByName[n] > 0.004);
