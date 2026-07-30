@@ -469,7 +469,9 @@ function leavesToRows(parsed, classMap, savedMap) {
         bsGroup = og === "ignore" ? null : og;
         const gc = { cash: "asset_current", debtors: "asset_current", inventory: "asset_current", noncurrent: "asset_noncurrent", creditors: "liability_current", equity: "equity", ignore: "ignore" }[og];
         if (gc) cat = gc;
-        if (og !== "debtors" && og !== "creditors") subtype = null;
+        // لو الحساب عميل/مورد بطبيعته، يفضل محتفظ بتصنيفه الفرعي مهما كانت المجموعة اللي اتنقل لها
+        // يدويًا — غير كده بيختفي من إجمالي «ذمم العملاء المدينة»/«موردون» في كل رفع جديد كل شهر
+        if (!(isCustomer || isSupplier)) subtype = null;
       }
     }
     rows.push({ id: uid(), code: leaf.code, name: leaf.name, debit, credit, category: cat,
