@@ -4450,7 +4450,9 @@ function MainApp({ user, biometric }) {
   const partners = useMemo(() => {
     if (!activePeriod) return [];
     const lastF = computeFigures(activePeriod.rows, 0);
-    const eq = lastF.equityAccountRows.filter((r) => r.amount > 0);
+    const isDrawing = (n) => /جاري|مسحوب|سحب|مدفوعات|موزع|توزيع/.test(n);
+    const isRetained = (n) => /محتجز|مرحل|مرحّل|أرباح سابقة|ارباح سابقة/.test(n);
+    const eq = lastF.equityAccountRows.filter((r) => r.amount > 0 && !isDrawing(r.name) && !isRetained(r.name));
     const total = eq.reduce((s, p) => s + p.amount, 0);
     if (!total) return [];
     return eq.map((p) => ({ name: p.name, pct: p.amount / total }));
