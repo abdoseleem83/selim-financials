@@ -515,9 +515,12 @@ function leavesToRows(parsed, classMap, savedMap) {
       else if (/خصم مكتسب/.test(path)) cat = "other_income";
     }
 
-    // فصل العملاء/الموردين حسب طبيعة الرصيد (له الأولوية على أي تصنيف)
-    const isCustomer = /عملاء|عميل/.test(leaf.name) || leaf.chain.some((c) => /عملاء/.test(c.name));
-    const isSupplier = /موردين|مورد/.test(leaf.name) || leaf.chain.some((c) => /موردين/.test(c.name));
+    // فصل العملاء/الموردين حسب طبيعة الرصيد (له الأولوية على أي تصنيف) — لكن نستبعد حسابات
+    // "فروق"/"تسوية" اللي بتذكر كلمة عملاء أو موردين بالمصادفة (زي "فروق قروش العملاء")
+    // عشان دي حسابات إيراد/مصروف فعلية مش ذمم حقيقية، ومايتنقلوش غلط للمركز المالي
+    const isAdjustment = /فروق|تسوية/.test(leaf.name);
+    const isCustomer = !isAdjustment && (/عملاء|عميل/.test(leaf.name) || leaf.chain.some((c) => /عملاء/.test(c.name)));
+    const isSupplier = !isAdjustment && (/موردين|مورد/.test(leaf.name) || leaf.chain.some((c) => /موردين/.test(c.name)));
     if (isCustomer) cat = leaf.nature === "debit" ? "asset_current" : "liability_current";
     else if (isSupplier) cat = leaf.nature === "credit" ? "liability_current" : "asset_current";
 
@@ -607,9 +610,11 @@ function buildFlatRows(rawRows, mapping) {
     let cat = guessCategory(nm, code) || (pName ? guessCategory(pName, code) : null);
     // نفس منطق فصل العملاء/الموردين المستخدم في وضع الشجرة — كان غايبًا هنا تمامًا،
     // فأي ميزان يُرفع بصيغة مسطّحة (بدون تدرّج شجري) كان يخرج بدون تصنيف عملاء/موردين ولا subtype خالص
+    // (ونستبعد حسابات "فروق/تسوية" اللي بتذكر عملاء/موردين بالمصادفة زي "فروق قروش العملاء")
     const forCheck = `${nm} ${pName || ""}`;
-    const isCustomer = /عملاء|عميل/.test(forCheck);
-    const isSupplier = /موردين|مورد/.test(forCheck);
+    const isAdjustment = /فروق|تسوية/.test(nm);
+    const isCustomer = !isAdjustment && /عملاء|عميل/.test(forCheck);
+    const isSupplier = !isAdjustment && /موردين|مورد/.test(forCheck);
     const nature = debit >= credit ? "debit" : "credit";
     if (isCustomer) cat = nature === "debit" ? "asset_current" : "liability_current";
     else if (isSupplier) cat = nature === "credit" ? "liability_current" : "asset_current";
