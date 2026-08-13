@@ -419,17 +419,34 @@ function buildTreeRows(rawRows, h) {
 
   const nameByCode = {};
   all.forEach((a) => { nameByCode[a.code] = a.name; });
-  const depthOf = (code) => code.split("/").length;
-  const isLeaf = (code) => !all.some((a) => a.code !== code && a.code.startsWith(code + "/"));
-  const parentChain = (code) => {
-    const parts = code.split("/");
-    const chain = [];
-    for (let i = parts.length - 1; i >= 1; i--) {
-      const anc = parts.slice(0, i).join("/");
-      if (nameByCode[anc]) chain.push({ code: anc, name: nameByCode[anc] });
-    }
-    return chain; // من الأقرب للأبعد
-  };
+  const codeSet = new Set(all.map((a) => a.code));
+  // بعض الشركات بتستخدم ترقيم بـ"/" (1/1/1) وبعضها بيستخدم ترقيم متلاصق بالبادئة الرقمية
+  // (1 ثم 11 ثم 1101 ثم 11010001، من غير أي فاصل) — نكتشف صيغة الملف تلقائيًا ونتعامل مع الاثنين
+  const usesSlash = all.some((a) => a.code.includes("/"));
+  const isLeaf = usesSlash
+    ? (code) => !all.some((a) => a.code !== code && a.code.startsWith(code + "/"))
+    : (code) => !all.some((a) => a.code !== code && a.code.length > code.length && a.code.startsWith(code));
+  const parentChain = usesSlash
+    ? (code) => {
+        const parts = code.split("/");
+        const chain = [];
+        for (let i = parts.length - 1; i >= 1; i--) {
+          const anc = parts.slice(0, i).join("/");
+          if (nameByCode[anc]) chain.push({ code: anc, name: nameByCode[anc] });
+        }
+        return chain; // من الأقرب للأبعد
+      }
+    : (code) => {
+        const chain = [];
+        for (let len = code.length - 1; len > 0; len--) {
+          const anc = code.slice(0, len);
+          if (anc !== code && codeSet.has(anc) && nameByCode[anc]) chain.push({ code: anc, name: nameByCode[anc] });
+        }
+        return chain; // من الأقرب للأبعد
+      };
+  // المستوى الحقيقي = طول سلسلة الآباء الموجودين فعليًا في الملف (مش عدد خانات الكود) —
+  // كده شغالة صح مع الصيغتين حتى لو في قفزات في عدد الخانات بين مستوى وتاني
+  const depthOf = (code) => parentChain(code).length + 1;
 
   // الأوراق فقط (التفاصيل النهائية) هي اللي فيها الأرقام الحقيقية — تفادي الازدواج
   const leaves = [];
