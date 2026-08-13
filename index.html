@@ -605,6 +605,95 @@ function buildFlatRows(rawRows, mapping) {
   return out;
 }
 
+// حوّل صفوف محفوظة (leaf rows فيها chain) لشكل "leaf" اللي بتفهمه leavesToRows
+function rowsToLeaves(rows) {
+  return (rows || []).map((r) => {
+    const nature = r.debit ? "debit" : (r.credit ? "credit" : (r.nature || "debit"));
+    return {
+      code: r.code, name: r.name, chain: r.chain || [],
+      closingValue: r.debit || r.credit || 0, nature,
+      opening: r.opening || 0, netDebit: r.netDebit || 0, netCredit: r.netCredit || 0,
+    };
+  });
+}
+
+// ابنِ قائمة الحسابات "الأب" (كل المستويات) من سلاسل chain المخزّنة على كل ورقة —
+// بتشتغل بغض النظر عن مصدر الأوراق (شجري أو مسطّح) طول ما كل ورقة فيها chain
+function parentsFromLeaves(leaves) {
+  const nameByCode = {};
+  leaves.forEach((l) => (l.chain || []).forEach((a) => { if (!nameByCode[a.code]) nameByCode[a.code] = a.name; }));
+  const parentCodesSet = new Set();
+  leaves.forEach((l) => (l.chain || []).forEach((a) => parentCodesSet.add(a.code)));
+  const parents = [...parentCodesSet].map((code) => {
+    const kids = leaves.filter((l) => (l.chain || []).some((a) => a.code === code));
+    const debitSum = kids.filter((k) => k.nature === "debit").reduce((s, k) => s + k.closingValue, 0);
+    const creditSum = kids.filter((k) => k.nature === "credit").reduce((s, k) => s + k.closingValue, 0);
+    // العمق: بنحسبه من موضع الكود جوه سلسلة أول ورقة لاقيناها تحته — الجذر = 1، وكل ما قربنا من الورقة زاد
+    let depth = 1, chain = [];
+    for (const l of leaves) {
+      const idx = (l.chain || []).findIndex((a) => a.code === code);
+      if (idx >= 0) { depth = l.chain.length - idx; chain = l.chain.slice(idx + 1); break; }
+    }
+    return { code, name: nameByCode[code], depth, leafCount: kids.length, debitSum, creditSum, chain };
+  }).filter((p) => p.leafCount > 0);
+  return { parents, nameByCode };
+}
+
+// نسخة من buildFlatRows بترجّع بنية زي الشجري بالظبط (leaves + parents) لو الملف المسطّح فيه أكواد
+// هرمية حقيقية (حسابات "أب" لها صفوف مستقلة في الملف) — عشان تصنيف الآباء ينتشر تلقائيًا لأبنائهم
+// بدل ما المستخدم يصنّف كل حساب تفصيلي لوحده
+function buildFlatParsed(rawRows, mapping) {
+  const raw = [];
+  for (let r = mapping.headerRow + 1; r < rawRows.length; r++) {
+    const row = rawRows[r];
+    if (!row || row.every((c) => c === undefined || c === "")) continue;
+    const name = mapping.name >= 0 ? row[mapping.name] : "";
+    if (!name) continue;
+    let codeCell = mapping.code >= 0 ? row[mapping.code] : "";
+    if (typeof codeCell === "number") codeCell = String(Math.round(codeCell));
+    raw.push({ row, name: String(name).trim(), code: String(codeCell ?? "").trim() });
+  }
+  const codes = raw.map((x) => x.code).filter(Boolean);
+  if (!codes.length) return null;
+  const codeSet = new Set(codes);
+  const isParentCode = (c) => !!c && codes.some((o) => o !== c && o.startsWith(c) && o.length > c.length);
+  const codeToName = {};
+  raw.forEach((x) => { if (!codeToName[x.code]) codeToName[x.code] = x.name; });
+  const chainOf = (c) => {
+    const chain = [];
+    if (!c) return chain;
+    for (let len = c.length - 1; len > 0; len--) {
+      const anc = c.slice(0, len);
+      if (codeSet.has(anc) && codeToName[anc]) chain.push({ code: anc, name: codeToName[anc] });
+    }
+    return chain;
+  };
+  const useClosing = mapping.closingDebit >= 0 || mapping.closingCredit >= 0;
+  const leaves = [];
+  raw.forEach(({ row, name: nm, code }) => {
+    if (isParentCode(code)) return;
+    const num = (idx) => (idx >= 0 ? (parseFloat(row[idx]) || 0) : 0);
+    const movDebit = num(mapping.debit);
+    const movCredit = num(mapping.credit);
+    const openDebit = num(mapping.openingDebit);
+    const openCredit = num(mapping.openingCredit);
+    const closeDebit = num(mapping.closingDebit);
+    const closeCredit = num(mapping.closingCredit);
+    const debit = useClosing ? closeDebit : movDebit;
+    const credit = useClosing ? closeCredit : movCredit;
+    if (debit === 0 && credit === 0 && movDebit === 0 && movCredit === 0 && openDebit === 0 && openCredit === 0) return;
+    leaves.push({
+      code, name: nm, chain: chainOf(code),
+      closingValue: Math.abs(debit - credit), nature: debit >= credit ? "debit" : "credit",
+      opening: openDebit - openCredit, netDebit: movDebit, netCredit: movCredit,
+    });
+  });
+  if (!leaves.length) return null;
+  const { parents, nameByCode } = parentsFromLeaves(leaves);
+  if (!parents.length) return null; // مفيش حسابات أب حقيقية في الملف — سيب الوضع المسطّح القديم
+  return { leaves, parents, nameByCode: { ...codeToName, ...nameByCode } };
+}
+
 async function parseWorkbook(file) {
   const buf = await file.arrayBuffer();
   const wb = XLSX.read(buf, { type: "array" });
@@ -616,6 +705,8 @@ async function parseWorkbook(file) {
     return { mode: "tree", rawRows, tree, parsed };
   }
   const mapping = detectFlatColumns(rawRows) || { headerRow: 0, code: 0, name: 1, debit: 2, credit: 3, openingDebit: -1, openingCredit: -1, closingDebit: -1, closingCredit: -1 };
+  const flatParsed = buildFlatParsed(rawRows, mapping);
+  if (flatParsed) return { mode: "flatTree", rawRows, mapping, parsed: flatParsed };
   return { mode: "flat", rawRows, mapping };
 }
 
@@ -5154,8 +5245,9 @@ function MainApp({ user, biometric }) {
     setFile(f.name);
     const res = await parseWorkbook(f);
     setMode(res.mode);
-    if (res.mode === "tree") { setParsedTree(res.parsed); setPendingRows(res.parsed); }
-    else { setRawRowsFlat(res.rawRows); setMapping(res.mapping); }
+    setRawRowsFlat(res.rawRows);
+    if (res.mapping) setMapping(res.mapping);
+    if (res.mode === "tree" || res.mode === "flatTree") { setParsedTree(res.parsed); setPendingRows(res.parsed); }
   };
 
   const [batchBusy, setBatchBusy] = useState(false);
@@ -5173,7 +5265,7 @@ function MainApp({ user, biometric }) {
       for (let i = 0; i < sorted.length; i++) {
         const res = await parseWorkbook(sorted[i]);
         let rows;
-        if (res.mode === "tree") { rows = leavesToRows(res.parsed, seedClassMap(res.parsed), savedClass); }
+        if (res.mode === "tree" || res.mode === "flatTree") { rows = leavesToRows(res.parsed, seedClassMap(res.parsed), savedClass); }
         else rows = buildFlatRows(res.rawRows, res.mapping);
         let m = baseMonth + i, y = baseYear;
         while (m > 12) { m -= 12; y += 1; }
@@ -5228,9 +5320,28 @@ function MainApp({ user, biometric }) {
   };
 
   const startEditPeriod = (p) => {
-    // التعديل يشتغل على الصفوف النهائية المحفوظة (flat) عبر ClassifyTable
-    setDraftParsed(null);
-    setDraftRows(p.rows);
+    // نعيد بناء تدرّج الحسابات (الأب/الابن) من سلاسل chain المحفوظة على كل حساب —
+    // لو الميزان المحفوظ فيه ترقيم هرمي، التعديل يفتح بشاشة "صنّف الآباء" زي الرفع الجديد
+    // بالظبط، فأي تعديل على حساب أب ينتشر تلقائيًا لكل أبنائه بدل تعديل حساب حساب
+    const leaves = rowsToLeaves(p.rows);
+    const { parents, nameByCode } = parentsFromLeaves(leaves);
+    if (parents.length > 0) {
+      const cm = {};
+      parents.forEach((par) => {
+        const kidRows = (p.rows || []).filter((r) => (r.chain || []).some((a) => a.code === par.code));
+        const cats = new Set(kidRows.map((r) => r.category).filter(Boolean));
+        if (cats.size === 1) cm[par.code] = [...cats][0]; // كل الأبناء متصنّفين نفس التصنيف حاليًا — ده تصنيف الأب
+      });
+      const seeded = seedClassMapFrom({ parents, nameByCode }, savedClass, false);
+      Object.keys(seeded).forEach((k) => { if (!cm[k]) cm[k] = seeded[k]; });
+      setDraftParsed({ leaves, parents, nameByCode });
+      setDraftClassMap(cm);
+      setDraftRows(null);
+    } else {
+      // مفيش أكواد هرمية في الميزان ده (قديم من غير أكواد مثلاً) — رجّع لشاشة الجدول المسطّح
+      setDraftParsed(null);
+      setDraftRows(p.rows);
+    }
     setDraftIsNew(false);
     setDraftPeriodId(p.id);
     setDraftYear(p.year);
@@ -5238,6 +5349,83 @@ function MainApp({ user, biometric }) {
     setDraftOpeningInv(p.openingInventory || 0);
     setDraftCumulative(p.cumulative !== false);
     setStep("classify");
+  };
+
+  // بعد حفظ تصنيف حسابات أب (من رفع جديد أو من تعديل فترة)، انشر نفس التصنيف على كل
+  // الفترات التانية المحفوظة لنفس الشركة (قديمة وجديدة) بدل ما يتصنّف كل ميزان لوحده —
+  // بيحترم أي تعديل يدوي فردي سابق على حساب بعينه (bsGroup) وتصنيف العملاء/الموردين التلقائي
+  const propagateClassMapToOtherPeriods = (classMap, parsed, excludePeriodId) => {
+    if (!activeId) return;
+    const codeEntries = Object.entries(classMap).filter(([, cat]) => !!cat);
+    if (!codeEntries.length) return;
+    const byCode = {}, byName = {};
+    codeEntries.forEach(([code, cat]) => {
+      byCode[code] = cat;
+      const nm = parsed.nameByCode && parsed.nameByCode[code];
+      if (nm) byName[nm] = cat;
+    });
+    const targets = periods.filter((p) => p.id !== excludePeriodId);
+    if (!targets.length) return;
+    const col = db.collection("companies").doc(activeId).collection("periods");
+    (async () => {
+      for (let i = 0; i < targets.length; i += 50) {
+        const batch = db.batch();
+        let anyChange = false;
+        targets.slice(i, i + 50).forEach((p) => {
+          let changed = false;
+          const rows2 = (p.rows || []).map((r) => {
+            if (r.bsGroup || r.isCustomer || r.isSupplier) return r;
+            let newCat = null;
+            for (const anc of (r.chain || [])) {
+              if (byCode[anc.code]) { newCat = byCode[anc.code]; break; }
+              if (byName[anc.name]) { newCat = byName[anc.name]; break; }
+            }
+            if (!newCat || newCat === r.category) return r;
+            changed = true;
+            return { ...r, category: newCat };
+          });
+          if (changed) { batch.update(col.doc(p.id), { rows: rows2 }); anyChange = true; }
+        });
+        if (anyChange) await batch.commit().catch(() => {});
+      }
+    })();
+  };
+
+  // زر يدوي: طبّق آخر خريطة تصنيف محفوظة (عالميًا) على كل فترات الشركة النشطة دفعة واحدة —
+  // مفيد لتصحيح موازين قديمة اتصنّفت قبل ما التصنيف الحالي يتحدّد
+  const [reapplyBusy, setReapplyBusy] = useState(false);
+  const reapplyGlobalClassifications = async () => {
+    if (!activeId || readOnly || !periods.length) return;
+    if (!window.confirm(`هيتم تطبيق آخر تصنيف محفوظ على كل موازين الشركة دي (${periods.length} فترة) — القديمة والجديدة. متأكد؟`)) return;
+    setReapplyBusy(true);
+    try {
+      const col = db.collection("companies").doc(activeId).collection("periods");
+      let touched = 0;
+      for (let i = 0; i < periods.length; i += 50) {
+        const batch = db.batch();
+        let anyChange = false;
+        periods.slice(i, i + 50).forEach((p) => {
+          let changed = false;
+          const rows2 = (p.rows || []).map((r) => {
+            if (r.bsGroup || r.isCustomer || r.isSupplier) return r;
+            let newCat = null;
+            for (const anc of (r.chain || [])) {
+              const byC = savedClass[`code:${anc.code}`];
+              const byN = savedClass[`name:${anc.name}`];
+              if (byC) { newCat = byC; break; }
+              if (byN) { newCat = byN; break; }
+            }
+            if (!newCat || newCat === r.category) return r;
+            changed = true;
+            return { ...r, category: newCat };
+          });
+          if (changed) { batch.update(col.doc(p.id), { rows: rows2 }); anyChange = true; touched++; }
+        });
+        if (anyChange) await batch.commit().catch(() => {});
+      }
+      alert(touched ? `اتحدّث ${touched} فترة حسب آخر تصنيف محفوظ.` : "كل الفترات مطابقة لآخر تصنيف محفوظ بالفعل.");
+    } catch (e) { alert("تعذّر التحديث: " + e.message); }
+    setReapplyBusy(false);
   };
 
   const finalizeDraft = () => {
@@ -5250,6 +5438,7 @@ function MainApp({ user, biometric }) {
     }
     const periodObj = { id: draftPeriodId, year: draftYear, month: draftMonth, rows, openingInventory: draftOpeningInv, cumulative: draftCumulative, uploadedAt: Date.now() };
     savePeriod(periodObj);
+    if (draftParsed) propagateClassMapToOtherPeriods(draftClassMap, draftParsed, draftPeriodId);
     setActivePeriodId(draftPeriodId);
     setSelectedYear(draftYear);
     setDraftParsed(null); setDraftRows(null); setDraftClassMap({});
@@ -5411,11 +5600,22 @@ function MainApp({ user, biometric }) {
             <SectionTitle icon={Upload} sub="ارفع ميزان شهر واحد، أو عدة ملفات دفعة واحدة (كل ملف = شهر) وسيوزّعها التطبيق تلقائيًا">رفع فترة جديدة</SectionTitle>
             {batchBusy && <Card style={{ padding: 16, marginBottom: 12, textAlign: "center", color: GOLD, fontWeight: 600 }}>جارِ رفع ومعالجة الملفات…</Card>}
             <UploadZone title="رفع ميزان مراجعة" onFile={onFile} onFiles={onFiles} fileName={file} />
-            {mode === "tree" && parsedTree && (
+            {(mode === "tree" || mode === "flatTree") && parsedTree && (
               <TreeConfirm parsed={parsedTree} onConfirm={confirmTree} onFallback={() => { setMode("flat"); setMapping(detectFlatColumns(rawRowsFlat) || { headerRow: 0, code: 0, name: 1, debit: 2, credit: 3 }); }} />
             )}
             {mode === "flat" && rawRowsFlat && mapping && (
               <MappingConfirm rawRows={rawRowsFlat} mapping={mapping} setMapping={setMapping} onConfirm={confirmFlat} />
+            )}
+            {sortedPeriods.length > 0 && !readOnly && (
+              <div style={{ marginTop: 24 }}>
+                <button onClick={reapplyGlobalClassifications} disabled={reapplyBusy}
+                  style={{ display: "flex", alignItems: "center", gap: 6, background: "#fff", color: INK, border: `1px solid ${RULE}`, borderRadius: 8, padding: "8px 12px", fontSize: 12.5, cursor: reapplyBusy ? "default" : "pointer", fontFamily: "'IBM Plex Sans Arabic', sans-serif" }}>
+                  <RefreshCw size={13} /> {reapplyBusy ? "جارِ التحديث…" : "إعادة تطبيق آخر تصنيف على كل الفترات"}
+                </button>
+                <p style={{ fontSize: 10.5, color: "#8a8271", marginTop: 6, lineHeight: 1.6 }}>
+                  لو عدّلت تصنيف حساب أب من شاشة التصنيف، بينتشر تلقائيًا لكل الفترات القديمة والجديدة. استخدم الزر ده لو حابب تتأكد إن كل الموازين مطابقة لآخر تصنيف محفوظ.
+                </p>
+              </div>
             )}
             {sortedPeriods.length > 0 && (
               <div style={{ marginTop: 24 }}>
