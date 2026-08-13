@@ -475,25 +475,28 @@ function leavesToRows(parsed, classMap, savedMap) {
   const rows = [];
   parsed.leaves.forEach((leaf) => {
     // دور على أقرب أب في السلسلة له تصنيف
-    let category = null, parentName = leaf.name;
+    let category = null, parentName = leaf.name, manuallyClassified = false;
     for (const anc of leaf.chain) {
-      if (classMap[anc.code]) { category = classMap[anc.code]; parentName = anc.name; break; }
+      if (classMap[anc.code]) { category = classMap[anc.code]; parentName = anc.name; manuallyClassified = true; break; }
     }
     if (!category) category = guessCategory(leaf.name, leaf.code, leaf.chain.map((c) => c.name).join(" "));
 
-    // تصحيحات دقيقة حسب اسم الورقة أو مسارها — حتى لو الأب مصنّف تصنيف عام
+    // تصحيحات دقيقة حسب اسم الورقة أو مسارها — بس للحسابات اللي ملهاش تصنيف يدوي (تخمين تلقائي فقط)؛
+    // لو المستخدم صنّف أب (أي مستوى من 1 لـ5) بنفسه، تصنيفه هو اللي يتحسب ومايتلغيش بتخمين تلقائي
     const path = `${leaf.name} ${leaf.chain.map((c) => c.name).join(" ")}`;
     let cat = category;
-    // حسابات لا تدخل القوائم: التحويلات بين المخازن، والتغيير في المخزون (قيود تسوية)
-    if (/تحويلات داخلة|تحويلات خارجة|تحويل بين المخازن|التحويلات بين المخازن/.test(path)) cat = "ignore";
-    else if (/التغيير في المخزون|المخزون الحالي \(متاجرة\)|مخزون اول المدة/.test(path)) cat = "ignore";
-    // بنود قائمة الدخل التفصيلية لازم تتفصل عن بعضها
-    else if (/مردود|مرتجع/.test(path) && /مبيعات|مبيع/.test(path)) cat = "sales_returns";
-    else if (/خصم.*مسموح|خصم مسموح|خصومات مسموح/.test(path)) cat = "sales_discounts";
-    else if (/مردود|مرتجع/.test(path) && /مشتريات|مشتري/.test(path)) cat = "purchase_returns";
-    else if (/المبيعات|مبيعات/.test(path) && !/مردود|مرتجع|تكلفة|مقابل/.test(path) && (category === "revenue" || /ايرادات متاجرة|إيرادات متاجرة/.test(path))) cat = "revenue";
-    else if (/مشتريات|بضاعة مشتراة/.test(path) && !/مردود|مرتجع/.test(path)) cat = "purchases";
-    else if (/خصم مكتسب/.test(path)) cat = "other_income";
+    if (!manuallyClassified) {
+      // حسابات لا تدخل القوائم: التحويلات بين المخازن، والتغيير في المخزون (قيود تسوية)
+      if (/تحويلات داخلة|تحويلات خارجة|تحويل بين المخازن|التحويلات بين المخازن/.test(path)) cat = "ignore";
+      else if (/التغيير في المخزون|المخزون الحالي \(متاجرة\)|مخزون اول المدة/.test(path)) cat = "ignore";
+      // بنود قائمة الدخل التفصيلية لازم تتفصل عن بعضها
+      else if (/مردود|مرتجع/.test(path) && /مبيعات|مبيع/.test(path)) cat = "sales_returns";
+      else if (/خصم.*مسموح|خصم مسموح|خصومات مسموح/.test(path)) cat = "sales_discounts";
+      else if (/مردود|مرتجع/.test(path) && /مشتريات|مشتري/.test(path)) cat = "purchase_returns";
+      else if (/المبيعات|مبيعات/.test(path) && !/مردود|مرتجع|تكلفة|مقابل/.test(path) && (category === "revenue" || /ايرادات متاجرة|إيرادات متاجرة/.test(path))) cat = "revenue";
+      else if (/مشتريات|بضاعة مشتراة/.test(path) && !/مردود|مرتجع/.test(path)) cat = "purchases";
+      else if (/خصم مكتسب/.test(path)) cat = "other_income";
+    }
 
     // فصل العملاء/الموردين حسب طبيعة الرصيد (له الأولوية على أي تصنيف)
     const isCustomer = /عملاء|عميل/.test(leaf.name) || leaf.chain.some((c) => /عملاء/.test(c.name));
