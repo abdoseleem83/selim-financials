@@ -244,14 +244,14 @@ const CATEGORY_GROUPS = [
 const ALL_CATS = CATEGORY_GROUPS.flatMap((g) => g.options);
 const DEBIT_NATURE = new Set(["asset_current", "asset_noncurrent", "sales_returns", "sales_discounts", "purchases", "cogs", "opex", "other_expense", "tax"]);
 
-function guessCategory(name = "", code = "", context = "") {
+function guessCategory(name = "", code = "", context = "", nature = null) {
   const n = `${name} ${context}`;
   const rules = [
-    [/مردودات المبيعات|مردودات مبيعات/, "sales_returns"],
-    [/خصم.*مبيعات|خصومات مسموح/, "sales_discounts"],
+    [/مردودات المبيعات|مردودات مبيعات|مردود المبيعات|مردود مبيعات|مرتجع مبيعات/, "sales_returns"],
+    [/خصم.*مبيعات|خصومات مسموح|خصم مسموح/, "sales_discounts"],
     // لازم تيجي قبل قواعد الأصول/الإيرادات العامة — غير كده "تكلفة البضاعة المباعه - مخزن كذا"
     // بتتصنف أصول متداولة بسبب كلمة "مخزن/بضاعة" وتضخّم المركز المالي
-    [/تكلفة المبيعات|تكلفة البضاعة|تكلفه البضاعه|تكلفة بضاعه|تكلفه بضاعة|تكلفة بضاعة|تكلفه بضاعه/, "cogs"],
+    [/تكلفة المبيعات|تكلفة البضاعة|تكلفه البضاعه|تكلفة بضاعه|تكلفه بضاعة|تكلفة بضاعة|تكلفه بضاعه|تكلفة منتج تام|تكلفه منتج تام/, "cogs"],
     [/نقد|بنك|صندوق|صناديق|خزين|خزنة|كاش|عملاء|مدين|مخزون|بضاعة|أوراق قبض|سلف|عهد/, "asset_current"],
     [/أصول ثابتة|عقار|آلات|أثاث|سيارات|مجمع إهلاك|مجمع اهلاك|استثمار.*طويل|شهرة/, "asset_noncurrent"],
     [/موردين|دائن|مصروفات مستحقة|أوراق دفع|ضريبة مستحقة|قرض قصير/, "liability_current"],
@@ -259,21 +259,20 @@ function guessCategory(name = "", code = "", context = "") {
     [/رأس المال|احتياطي|أرباح مرحلة|أرباح محتجزة|جاري الشريك|حقوق الملكية|شركاء/, "equity"],
     [/مشتريات/, "purchases"],
     [/مبيعات|إيراد التشغيل|إيرادات النشاط/, "revenue"],
-    [/مصروف|رواتب|مرتبات|إيجار|ايجار|إهلاك|اهلاك|دعاية|صيانة|كهرباء|قرطاسية|عمولات البيع|عمولات علي المبيعات|نقل وشحن|م\/ نقل|تليفون|بوفيه|نظافه|زكاه وبر|حوافز/, "opex"],
-    [/إيراد آخر|إيرادات أخرى|أرباح بيع أصل|ايراد بيع أصول|إيرادات متنوعه|خصم مكتسب/, "other_income"],
+    [/مصروف|رواتب|مرتبات|إيجار|ايجار|إهلاك|اهلاك|دعاية|صيانة|كهرباء|قرطاسية|عمولات البيع|عمولات علي المبيعات|نقل وشحن|م\/ نقل|تليفون|بوفيه|نظافه|زكاه وبر|حوافز|سولار|بنزين|وقود|انتقالات|مصاريف|رسوم|تراخيص|مخالفات|غيار|كارتة الطريق|مياه|اكراميات|ادوات|مستلزمات|عمولات وفوايد/, "opex"],
+    [/إيراد آخر|إيرادات أخرى|أرباح بيع أصل|ايراد بيع أصول|إيرادات متنوعه|إيرادات متنوعة|خصم مكتسب|بونص/, "other_income"],
     [/مصروف آخر|مصروفات أخرى|خسارة/, "other_expense"],
     [/ضريبة الدخل|ضريبة دخل/, "tax"],
     [/الأصول/, "asset_current"],
     [/الخصوم/, "liability_current"],
   ];
   for (const [re, cat] of rules) if (re.test(n)) return cat;
-  const c = String(code).trim();
-  const first = c[0];
-  if (first === "1") return "asset_current";
-  if (first === "2") return "liability_current";
-  if (first === "3") return "equity";
-  if (first === "4") return "revenue";
-  if (first === "5") return "opex";
+  // مفيش قاعدة كلمات مطابقة — مانخمّنش من أول رقم في الكود (ده بيختلف تمامًا من شركة لشركة:
+  // ممكن جذر "3" يبقى مصروفات عند شركة وحقوق ملكية عند شركة تانية)، فبدل كده نخمّن من طبيعة
+  // الرصيد نفسه: رصيد مدين على الأغلب مصروف، رصيد دائن على الأغلب إيراد — وده أأمن بكتير من
+  // تخمين "حقوق ملكية" اللي ممكن يخفي مصروفات حقيقية من قائمة الدخل تمامًا
+  if (nature === "debit") return "opex";
+  if (nature === "credit") return "other_income";
   return "asset_current";
 }
 
@@ -509,7 +508,7 @@ function leavesToRows(parsed, classMap, savedMap) {
         if (classMap[anc.code]) { category = classMap[anc.code]; parentName = anc.name; manuallyClassified = true; break; }
       }
     }
-    if (!category) category = guessCategory(leaf.name, leaf.code, leaf.chain.map((c) => c.name).join(" "));
+    if (!category) category = guessCategory(leaf.name, leaf.code, leaf.chain.map((c) => c.name).join(" "), leaf.nature);
 
     // تصحيحات دقيقة حسب اسم الورقة أو مسارها — بس للحسابات اللي ملهاش تصنيف يدوي (تخمين تلقائي فقط)؛
     // لو المستخدم صنّف أب (أي مستوى من 1 لـ5) بنفسه، تصنيفه هو اللي يتحسب ومايتلغيش بتخمين تلقائي
@@ -621,13 +620,13 @@ function buildFlatRows(rawRows, mapping) {
     if (debit === 0 && credit === 0 && movDebit === 0 && movCredit === 0 && openDebit === 0 && openCredit === 0) return;
     const chain = chainOf(code);
     const pName = chain.length ? chain[0].name : null;
-    let cat = guessCategory(nm, code) || (pName ? guessCategory(pName, code) : null);
+    const nature = debit >= credit ? "debit" : "credit";
+    let cat = guessCategory(nm, code, "", nature) || (pName ? guessCategory(pName, code, "", nature) : null);
     // نفس منطق فصل العملاء/الموردين المستخدم في وضع الشجرة — بس بالاعتماد على اسم الأب
     // المباشر فقط (مش اسم الحساب نفسه ولا أي أب بعيد)، عشان حساب زي "فروق قروش العملاء"
     // (أبوه المباشر مش "العملاء") ما يتحسبش ذمة عميل غلط
     const isCustomer = pName ? /عملاء|عميل/.test(pName) : false;
     const isSupplier = pName ? /موردين|مورد/.test(pName) : false;
-    const nature = debit >= credit ? "debit" : "credit";
     if (isCustomer) cat = nature === "debit" ? "asset_current" : "liability_current";
     else if (isSupplier) cat = nature === "credit" ? "liability_current" : "asset_current";
     let subtype = null;
@@ -1213,7 +1212,7 @@ function seedClassMapFrom(parsed, savedMap, autoGuess) {
     const byName = savedMap && savedMap[`name:${p.name}`];
     if (byCode) cm[p.code] = byCode;
     else if (byName) cm[p.code] = byName;
-    else if (autoGuess) cm[p.code] = guessCategory(p.name, p.code, p.chain.map((c) => c.name).join(" "));
+    else if (autoGuess) cm[p.code] = guessCategory(p.name, p.code, p.chain.map((c) => c.name).join(" "), p.debitSum >= (p.creditSum || 0) ? "debit" : "credit");
   });
   return cm;
 }
@@ -3110,10 +3109,10 @@ function BalanceSheet({ f, periodLabel, companyName, onReclassify, readOnly }) {
           {bg.treasury.rows.length > 0 && <SubGroup title={bg.treasury.title} rows={bg.treasury.rows} total={bg.treasury.total} />}
           {bg.custody.rows.length > 0 && <SubGroup title={bg.custody.title} rows={bg.custody.rows} total={bg.custody.total} />}
           {bg.banks.rows.length > 0 && <SubGroup title={bg.banks.title} rows={bg.banks.rows} total={bg.banks.total} />}
-          {bg.inventory.rows.length > 0 && <SubGroup title={bg.inventory.title} rows={bg.inventory.rows} total={bg.inventory.total} />}
-          {bg.advances.rows.length > 0 && <SubGroup title={bg.advances.title} rows={bg.advances.rows} total={bg.advances.total} />}
           {bg.receivables.rows.length > 0 && <SubGroup title={bg.receivables.title} rows={bg.receivables.rows} total={bg.receivables.total} />}
           {bg.supplierPrepaid.rows.length > 0 && <SubGroup title={bg.supplierPrepaid.title} rows={bg.supplierPrepaid.rows} total={bg.supplierPrepaid.total} />}
+          {bg.inventory.rows.length > 0 && <SubGroup title={bg.inventory.title} rows={bg.inventory.rows} total={bg.inventory.total} />}
+          {bg.advances.rows.length > 0 && <SubGroup title={bg.advances.title} rows={bg.advances.rows} total={bg.advances.total} />}
           {bg.deposits.rows.length > 0 && <SubGroup title={bg.deposits.title} rows={bg.deposits.rows} total={bg.deposits.total} />}
           {bg.otherDebtors.rows.length > 0 && <SubGroup title={bg.otherDebtors.title} rows={bg.otherDebtors.rows} total={bg.otherDebtors.total} />}
           <TotalRow label="إجمالي الأصول المتداولة" total={f.currentAssets} />
