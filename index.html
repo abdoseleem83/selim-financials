@@ -23,8 +23,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 
 <style>
-  html, body { margin: 0; padding: 0; }
-  #root { min-height: 100vh; }
+  html, body { margin: 0; padding: 0; overflow-x: hidden; max-width: 100%; }
+  #root { min-height: 100vh; overflow-x: hidden; max-width: 100%; }
 </style>
 </head>
 <body>
@@ -1316,7 +1316,9 @@ function computeFigures(rows, openingInventory) {
     const t = chainText(r);
     if (/تأمين|تامين/.test(t)) return "deposits";
     if (/بنك/.test(t)) return "banks";
-    if (/نقد|صندوق|صناديق|خزين|خزائن|خزنة|خزينه|عهد|كاش|محفظ/.test(t)) return "treasury";
+    // العهد (عهدة موظف/سيارة نقدية) منفصلة عن الخزائن الفعلية — نفس طبيعة النقدية بس بند مختلف في العرض
+    if (/عهد/.test(t)) return "custody";
+    if (/نقد|صندوق|صناديق|خزين|خزائن|خزنة|خزينه|كاش|محفظ/.test(t)) return "treasury";
     if ((/مخزون|بضاعة|بضائع|مخزن/.test(t)) && !/متاجرة|تحويل|اول المدة|أول المدة/.test(r.name)) return "inventory";
     // حساب فيه "جاري" وهو لسه مصنّف كأصل (مش حقوق ملكية) غالبًا حساب جاري شريك اتصنف غلط —
     // منحطوش في «سلف» عشان القيم بتاعته بتبقى ضخمة وبالسالب وبتشوّه البند؛ يفضل في «أرصدة مدينة أخرى» لحد ما يتصحح تصنيفه من شاشة التصنيف
@@ -1363,6 +1365,7 @@ function computeFigures(rows, openingInventory) {
     return bucketOf(r) === g;
   }).map((r) => ({ name: r.name, amount: val(r) })).filter((r) => Math.abs(r.amount) > 0.004);
   const treasuryGroup = bucketRows("treasury");
+  const custodyGroup = bucketRows("custody");
   const banksGroup = bucketRows("banks");
   const inventoryGroup = bucketRows("inventory");
   const advancesGroup = bucketRows("advances");
@@ -1425,13 +1428,14 @@ function computeFigures(rows, openingInventory) {
     debtors: { title: "المدينون", rows: debtorsGroup, total: debtorsGroup.reduce((s, r) => s + r.amount, 0) },
     // المجموعات التفصيلية الجديدة لعرض المركز المالي
     treasury: { title: "أولاً: خزائن", rows: treasuryGroup, total: treasuryGroup.reduce((s, r) => s + r.amount, 0) },
-    banks: { title: "ثانياً: بنوك", rows: banksGroup, total: banksGroup.reduce((s, r) => s + r.amount, 0) },
-    receivables: { title: "ثالثاً: عملاء مستحق", rows: receivablesGroup, total: receivablesGroup.reduce((s, r) => s + r.amount, 0) },
-    supplierPrepaid: { title: "رابعاً: دفعات مقدمة موردين", rows: supplierPrepaidGroup, total: supplierPrepaidGroup.reduce((s, r) => s + r.amount, 0) },
-    inventory: { title: "خامساً: مخازن", rows: inventoryGroup, total: inventoryGroup.reduce((s, r) => s + r.amount, 0) },
-    advances: { title: "سادساً: سلف", rows: advancesGroup, total: advancesGroup.reduce((s, r) => s + r.amount, 0) },
-    deposits: { title: "سابعاً: تأمين", rows: depositsGroup, total: depositsGroup.reduce((s, r) => s + r.amount, 0) },
-    otherDebtors: { title: "ثامناً: أرصدة مدينة أخرى", rows: otherDebtorsGroup, total: otherDebtorsGroup.reduce((s, r) => s + r.amount, 0) },
+    custody: { title: "ثانياً: العهد", rows: custodyGroup, total: custodyGroup.reduce((s, r) => s + r.amount, 0) },
+    banks: { title: "ثالثاً: بنوك", rows: banksGroup, total: banksGroup.reduce((s, r) => s + r.amount, 0) },
+    receivables: { title: "رابعاً: عملاء مستحق", rows: receivablesGroup, total: receivablesGroup.reduce((s, r) => s + r.amount, 0) },
+    supplierPrepaid: { title: "خامساً: دفعات مقدمة موردين", rows: supplierPrepaidGroup, total: supplierPrepaidGroup.reduce((s, r) => s + r.amount, 0) },
+    inventory: { title: "سادساً: مخازن", rows: inventoryGroup, total: inventoryGroup.reduce((s, r) => s + r.amount, 0) },
+    advances: { title: "سابعاً: سلف", rows: advancesGroup, total: advancesGroup.reduce((s, r) => s + r.amount, 0) },
+    deposits: { title: "ثامناً: تأمين", rows: depositsGroup, total: depositsGroup.reduce((s, r) => s + r.amount, 0) },
+    otherDebtors: { title: "تاسعاً: أرصدة مدينة أخرى", rows: otherDebtorsGroup, total: otherDebtorsGroup.reduce((s, r) => s + r.amount, 0) },
     noncurrent: { title: "أصول ثابتة", rows: [{ name: "صافي الأصول الثابتة (بعد مجمع الإهلاك)", amount: nonCurrentAssets }].filter((r) => Math.abs(r.amount) > 0.004), total: nonCurrentAssets, detailRows: assetNoncurrentRows },
     creditors: { title: "الخصوم المتداولة", rows: creditorsGroup, total: creditorsGroup.reduce((s, r) => s + r.amount, 0) },
     suppliersPayable: { title: "أولاً: موردين مستحق", rows: suppliersPayableGroup, total: suppliersPayableGroup.reduce((s, r) => s + r.amount, 0) },
@@ -1966,7 +1970,7 @@ function balanceSheetSpec(f, companyName, periodLabel) {
   if (bg.noncurrent.rows.length) grp(bg.noncurrent);
   TOT("إجمالي الأصول الثابتة", f.nonCurrentAssets);
   SEC("الأصول المتداولة");
-  [bg.treasury, bg.banks, bg.inventory, bg.advances, bg.receivables, bg.supplierPrepaid, bg.deposits, bg.otherDebtors].forEach((g) => { if (g.rows.length) grp(g); });
+  [bg.treasury, bg.custody, bg.banks, bg.inventory, bg.advances, bg.receivables, bg.supplierPrepaid, bg.deposits, bg.otherDebtors].forEach((g) => { if (g.rows.length) grp(g); });
   TOT("إجمالي الأصول المتداولة", f.currentAssets);
   TOT("إجمالي الأصول", f.totalAssets, true);
   SEC("الخصوم وحقوق الملكية");
@@ -2992,6 +2996,7 @@ function BalanceSheet({ f, periodLabel, companyName, onReclassify, readOnly }) {
   }, [f]);
   const GROUPS = [
     { k: "treasury", l: "خزائن" },
+    { k: "custody", l: "العهد" },
     { k: "banks", l: "بنوك" },
     { k: "receivables", l: "عملاء مستحق" },
     { k: "supplierPrepaid", l: "دفعات مقدمة موردين" },
@@ -3095,6 +3100,7 @@ function BalanceSheet({ f, periodLabel, companyName, onReclassify, readOnly }) {
 
           <SectionRow text="◈ الأصول المتداولة" />
           {bg.treasury.rows.length > 0 && <SubGroup title={bg.treasury.title} rows={bg.treasury.rows} total={bg.treasury.total} />}
+          {bg.custody.rows.length > 0 && <SubGroup title={bg.custody.title} rows={bg.custody.rows} total={bg.custody.total} />}
           {bg.banks.rows.length > 0 && <SubGroup title={bg.banks.title} rows={bg.banks.rows} total={bg.banks.total} />}
           {bg.inventory.rows.length > 0 && <SubGroup title={bg.inventory.title} rows={bg.inventory.rows} total={bg.inventory.total} />}
           {bg.advances.rows.length > 0 && <SubGroup title={bg.advances.title} rows={bg.advances.rows} total={bg.advances.total} />}
@@ -5045,7 +5051,7 @@ function MainApp({ user, biometric }) {
 
   // ===== تعديل تصنيف حساب من داخل القوائم =====
   const GROUP_TO_CAT = {
-    treasury: "asset_current", banks: "asset_current", receivables: "asset_current", supplierPrepaid: "asset_current",
+    treasury: "asset_current", custody: "asset_current", banks: "asset_current", receivables: "asset_current", supplierPrepaid: "asset_current",
     inventory: "asset_current", advances: "asset_current", deposits: "asset_current", other_debtors: "asset_current",
     cash: "asset_current", debtors: "asset_current", noncurrent: "asset_noncurrent",
     creditors: "liability_current", customerPrepaidLiab: "liability_current", other_creditors: "liability_current",
