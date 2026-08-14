@@ -1993,8 +1993,9 @@ function balanceSheetSpec(f, companyName, periodLabel) {
   TOT("إجمالي جاري الشركاء", sumA(drawingRows));
   SUB("ثالثاً: أرباح محتجزة سنوات سابقة");
   if (retainedRows.length) retainedRows.forEach((r, i) => R(i + 1, r.name, r.amount));
-  else R(1, "أرباح محتجزة من سنوات سابقة", 0);
-  TOT("إجمالي الأرباح المحتجزة", sumA(retainedRows));
+  if (f.priorYearsRetained) R(retainedRows.length + 1, "أرباح محتجزة (مُرحّلة تلقائيًا من إقفال سنوات سابقة)", f.priorYearsRetained);
+  if (!retainedRows.length && !f.priorYearsRetained) R(1, "أرباح محتجزة من سنوات سابقة", 0);
+  TOT("إجمالي الأرباح المحتجزة", sumA(retainedRows) + (f.priorYearsRetained || 0));
   R("", "رابعاً: أرباح الفترة الجارية", f.netProfit);
   const capTotal = sumA(capitalRows);
   if (capTotal > 0) capitalRows.forEach((p, i) => R(i + 1, `— ${p.name} (${((p.amount / capTotal) * 100).toFixed(2)}%)`, f.netProfit * (p.amount / capTotal)));
@@ -3158,7 +3159,9 @@ function BalanceSheet({ f, periodLabel, companyName, onReclassify, readOnly }) {
                   <td colSpan={2} style={{ padding: "6px 6px", fontWeight: 600, color: "#6b6455", fontSize: 12.5 }}>إجمالي جاري الشركاء</td>
                   <td style={{ padding: "6px 6px", textAlign: "left", direction: "ltr", fontWeight: 600, color: "#6b6455", whiteSpace: "nowrap" }}>{fmt(sum(drawings))}</td>
                 </tr>
-                <SubGroup title="ثالثاً: أرباح محتجزة سنوات سابقة" rows={retained.length ? retained : [{ name: "أرباح محتجزة من سنوات سابقة", amount: 0 }]} total={sum(retained)} />
+                <SubGroup title="ثالثاً: أرباح محتجزة سنوات سابقة" rows={
+                  f.priorYearsRetained ? [...retained, { name: "أرباح محتجزة (مُرحّلة تلقائيًا من إقفال سنوات سابقة)", amount: f.priorYearsRetained }] : (retained.length ? retained : [{ name: "أرباح محتجزة من سنوات سابقة", amount: 0 }])
+                } total={sum(retained) + (f.priorYearsRetained || 0)} />
                 <ItemRow label="رابعاً: أرباح الفترة الجارية (من بداية السنة)" partial={f.netProfit} />
                 {capital.length > 0 && sum(capital) > 0 && capital.map((p, i) => (
                   <ItemRow key={`pp${i}`} idx={i + 1} label={`— ${p.name} (${((p.amount / sum(capital)) * 100).toFixed(2)}%)`} partial={f.netProfit * (p.amount / sum(capital))} />
@@ -5509,6 +5512,16 @@ function MainApp({ user, biometric }) {
     return first ? (first.openingInventory || 0) : 0;
   };
 
+  // إقفال آخر السنة تلقائيًا: أرباح كل سنة سابقة (لو موجود بيانات ليها) بتترحّل كأرباح محتجزة
+  // في مركز السنة الحالية — من غير ما يحتاج المستخدم يدخل حساب "أرباح مرحلة" يدوي في الميزان
+  const priorYearsRetainedProfit = (year) => {
+    const years = [...new Set(sortedPeriods.filter((p) => p.year < year).map((p) => p.year))];
+    return years.reduce((sum, y) => {
+      const yf = yearFigures(sortedPeriods, y, yearOpeningInvOf(y));
+      return sum + (yf ? yf.netProfit : 0);
+    }, 0);
+  };
+
   // أرقام الشهر النشط: قائمة الدخل للشهر وحده (بعد طرح التراكمي السابق لو الميزان تراكمي)
   const figures = useMemo(() => (activePeriod ? periodFigures(sortedPeriods, activePeriod, yearOpeningInvOf(activePeriod.year)) : null), [activePeriod, sortedPeriods]);
   const monthlyPeriodLabel = activePeriod ? `قائمة الدخل الشهرية ◆ ${MONTH_NAMES[activePeriod.month - 1]} ${activePeriod.year}` : "";
@@ -5521,8 +5534,9 @@ function MainApp({ user, biometric }) {
     const asOf = computeFigures(per.rows, 0);
     const ytd = yearFigures(sortedPeriods.filter((p) => p.year === per.year && p.month <= per.month), per.year, yearOpeningInvOf(per.year));
     const ytdProfit = ytd ? ytd.netProfit : asOf.netProfit;
-    const totalEquity = asOf.equityAccounts + ytdProfit;
-    return { ...asOf, netProfit: ytdProfit, totalEquity, balanceDiff: asOf.totalAssets - (asOf.totalLiab + totalEquity) };
+    const priorProfit = priorYearsRetainedProfit(per.year);
+    const totalEquity = asOf.equityAccounts + ytdProfit + priorProfit;
+    return { ...asOf, netProfit: ytdProfit, priorYearsRetained: priorProfit, totalEquity, balanceDiff: asOf.totalAssets - (asOf.totalLiab + totalEquity) };
   };
   const balanceFigures = useMemo(() => balanceFiguresOf(activePeriod), [activePeriod, sortedPeriods]);
 
