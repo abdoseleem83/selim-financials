@@ -1208,6 +1208,12 @@ function ClassifyTable({ rows, setRows, onNext, nextLabel }) {
 function seedClassMapFrom(parsed, savedMap, autoGuess) {
   const cm = {};
   parsed.parents.forEach((p) => {
+    // الحسابات التفصيلية النهائية (الأوراق) ما بتاخدش تصنيفها من الذاكرة العالمية المحفوظة بالاسم/الكود —
+    // لو أخدت، أي مرة تتصنّف فيها هتفضل "مصنّفة مباشرة" للأبد وتوقف انتشار تصنيف أبوها ليها تاني
+    // (لو غيّرت تصنيف الأب بعد كده، الورقة مش هتتبع التغيير). وكمان بما إن الذاكرة دي عالمية لكل
+    // شركات المستخدم، حساب بنفس الاسم (زي "صافي المشتريات") في شركة تانية كان ممكن يسرّب تصنيفه هنا.
+    // فالأوراق تاخد تصنيفها بس من: (1) اختيار المستخدم المباشر ليها في الجلسة الحالية، أو (2) أقرب أب مصنّف.
+    if (p.isLeafItem) return;
     const byCode = savedMap && savedMap[`code:${p.code}`];
     const byName = savedMap && savedMap[`name:${p.name}`];
     if (byCode) cm[p.code] = byCode;
@@ -4943,10 +4949,14 @@ function MainApp({ user, biometric }) {
     return unsub;
   }, [user.uid]);
   const persistClassifications = (classMap, parsed) => {
-    // خزّن التصنيف بالكود وبالاسم (عشان لو الكود اتغير يفتكر بالاسم)
+    // خزّن تصنيف الحسابات "الأب" بس في الذاكرة العالمية — مش الحسابات التفصيلية (الأوراق).
+    // لو خزّنّا تصنيف ورقة (حساب تفصيلي)، هيتفتكر باسمه لكل شركات المستخدم، وهيفضل ثابت حتى
+    // لو غيّرت تصنيف أبوه بعد كده (لأنه هيبقى "مصنّف مباشرة" وياخد أولوية على أي أب). كمان حساب
+    // بنفس الاسم في شركة تانية (زي "صافي المشتريات") ممكن يسرّب تصنيفه لشركة غير اللي هو فيها.
+    const leafCodes = new Set((parsed.parents || []).filter((p) => p.isLeafItem).map((p) => p.code));
     const add = {};
     Object.entries(classMap).forEach(([code, cat]) => {
-      if (!cat) return;
+      if (!cat || leafCodes.has(code)) return;
       add[`code:${code}`] = cat;
       const nm = parsed.nameByCode[code];
       if (nm) add[`name:${nm}`] = cat;
