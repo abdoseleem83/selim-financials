@@ -875,7 +875,7 @@ function CompanyList({ companies, user, onOpen, onOpenZakat, onAdd, onDelete, on
         {companies.map((c) => {
           const pCount = c.periodCount !== undefined ? c.periodCount : ((c.periods || []).length);
           const legacyLatest = (c.periods && c.periods.length) ? c.periods[c.periods.length - 1] : null;
-          const f = legacyLatest ? computeFigures(legacyLatest.rows, legacyLatest.openingInventory || 0) : null;
+          const f = legacyLatest ? computeFigures(legacyLatest.rows, legacyLatest.openingInventory || 0, c.cogsMethod) : null;
           const role = getRole(c, user);
           const isOwner = role === "owner";
           return (
@@ -1217,7 +1217,7 @@ function seedClassMapFrom(parsed, savedMap, autoGuess) {
   return cm;
 }
 
-function computeFigures(rows, openingInventory) {
+function computeFigures(rows, openingInventory, forcedCogsMethod) {
   // للمركز المالي: نستخدم رصيد نهاية المدة (debit/credit) حسب طبيعة التصنيف
   const val = (r) => (DEBIT_NATURE.has(r.category) ? r.debit - r.credit : r.credit - r.debit);
   // لقائمة الدخل: نستخدم صافي حركة الشهر (netDebit - netCredit) لو متوفرة، وإلا رصيد النهاية
@@ -1258,7 +1258,11 @@ function computeFigures(rows, openingInventory) {
     // تكلفة البضاعة المباعة طبيعتها مدينة
     return s + ((nd !== 0 || nc !== 0) ? (nd - nc) : (r.debit - r.credit));
   }, 0);
-  const useDirectCogs = Math.abs(directCogs) > 0.004;
+  // لو الشركة محددة طريقة ثابتة (من إعدادات الشركة)، نلتزم بيها بدل الاكتشاف التلقائي —
+  // ده بيمنع تذبذب الطريقة بين شهر وشهر لنفس الشركة بسبب اختلاف الحسابات المستخدمة في كل ميزان
+  const useDirectCogs = forcedCogsMethod === "direct" ? true
+    : forcedCogsMethod === "formula" ? false
+    : Math.abs(directCogs) > 0.004;
   const cogs = useDirectCogs ? directCogs : (openInv + purchases - closingInventory);
   const cogsMethod = useDirectCogs ? "direct" : "formula";
   const grossProfit = netSales - cogs;
@@ -1761,8 +1765,8 @@ function monthlyPerformanceNotes(monthly, activeMonths, annual) {
    - لو الميزان "تراكمي من بداية السنة" (الوضع الافتراضي في برامج الحسابات): أرقام قائمة الدخل
      للشهر = التراكمي الحالي − التراكمي للفترة السابقة في نفس السنة، والمركز المالي من الميزان الحالي مباشرة.
    - لو الميزان "حركة الشهر فقط": الأرقام تؤخذ كما هي. */
-function periodFigures(sortedPeriods, period, yearOpeningInv) {
-  const fCurr = computeFigures(period.rows, 0);
+function periodFigures(sortedPeriods, period, yearOpeningInv, forcedCogsMethod) {
+  const fCurr = computeFigures(period.rows, 0, forcedCogsMethod);
   const samePrev = sortedPeriods.filter((p) => p.year === period.year && p.month < period.month).pop();
 
   // مخزون أول المدة: الأولوية للرصيد الافتتاحي المستخرج من الميزان نفسه، وإلا رصيد نهاية الشهر السابق
@@ -1771,13 +1775,13 @@ function periodFigures(sortedPeriods, period, yearOpeningInv) {
   if (fCurr.openingInventoryFromTB && fCurr.openingInventoryFromTB > 0) {
     monthOpenInv = fCurr.openingInventoryFromTB;
     if (samePrev) {
-      const prevClosing = computeFigures(samePrev.rows, 0).closingInventory;
+      const prevClosing = computeFigures(samePrev.rows, 0, forcedCogsMethod).closingInventory;
       if (Math.abs(prevClosing - monthOpenInv) > 1) {
         openingWarning = `تنبيه: رصيد مخزون آخر ${MONTH_NAMES[samePrev.month - 1]} (${fmt(prevClosing)}) لا يطابق رصيد افتتاح ${MONTH_NAMES[period.month - 1]} (${fmt(monthOpenInv)}) — فرق ${fmt(prevClosing - monthOpenInv)}. راجع الميزان.`;
       }
     }
   } else {
-    monthOpenInv = samePrev ? computeFigures(samePrev.rows, 0).closingInventory : (yearOpeningInv || period.openingInventory || 0);
+    monthOpenInv = samePrev ? computeFigures(samePrev.rows, 0, forcedCogsMethod).closingInventory : (yearOpeningInv || period.openingInventory || 0);
   }
 
   // كل شهر يُرفع منفصلاً وأرقام قائمة الدخل من صافي الحركة = رقم الشهر مباشرة (بدون طرح)
@@ -1797,10 +1801,10 @@ function periodFigures(sortedPeriods, period, yearOpeningInv) {
 }
 
 /* الأرقام السنوية = مجموع الفترات الشهرية (كل شهر مرفوع منفصلاً) */
-function yearFigures(sortedPeriods, year, yearOpeningInv) {
+function yearFigures(sortedPeriods, year, yearOpeningInv, forcedCogsMethod) {
   const ps = sortedPeriods.filter((p) => p.year === year);
   if (!ps.length) return null;
-  return mergeFigures(ps.map((p) => periodFigures(sortedPeriods, p, yearOpeningInv)));
+  return mergeFigures(ps.map((p) => periodFigures(sortedPeriods, p, yearOpeningInv, forcedCogsMethod)));
 }
 
 function Line({ label, value, bold, indent, ruleTop }) {
@@ -2206,7 +2210,7 @@ function homeSheetSpec(company, periods, year, annual, latest, zakatDue) {
   const monthly = MONTH_NAMES.map((mn, idx) => {
     const p = yearPeriods.find((x) => x.month === idx + 1);
     if (!p) { rows.push({ cells: [{ v: mn, style: { align: "right", color: "FFAAAAAA" } }] }); return { name: mn, empty: true }; }
-    const pf = periodFigures(periods, p, 0);
+    const pf = periodFigures(periods, p, 0, company.cogsMethod);
     tot.gs += pf.grossSales; tot.ns += pf.netSales; tot.gp += pf.grossProfit; tot.ox += pf.opex; tot.op += pf.operatingProfit; tot.np += pf.netProfit;
     rows.push({ cells: [
       { v: mn, style: { bold: true } },
@@ -3702,11 +3706,11 @@ function HomeDashboard({ company, periods, year, setYear, availableYears, zakatD
   const monthly = MONTH_NAMES.map((name, i) => {
     const p = yearPeriods.find((x) => x.month === i + 1);
     if (!p) return { name, empty: true };
-    const f = periodFigures(periods, p, yearOpenInv);
+    const f = periodFigures(periods, p, yearOpenInv, company.cogsMethod);
     return { name, empty: false, ...f };
   });
   const activeMonths = monthly.filter((m) => !m.empty);
-  const annual = yearFigures(periods, year, yearOpenInv);
+  const annual = yearFigures(periods, year, yearOpenInv, company.cogsMethod);
 
   if (!annual) {
     return (
@@ -5351,7 +5355,7 @@ function MainApp({ user, biometric }) {
       const m = last.month === 12 ? 1 : last.month + 1;
       const y = last.month === 12 ? last.year + 1 : last.year;
       const firstOfYear = sortedPeriods.find((p) => p.year === y);
-      setDraftOpeningInv(firstOfYear ? (firstOfYear.openingInventory || 0) : (last.month === 12 ? round2(computeFigures(last.rows, 0).closingInventory) : (last.openingInventory || 0)));
+      setDraftOpeningInv(firstOfYear ? (firstOfYear.openingInventory || 0) : (last.month === 12 ? round2(computeFigures(last.rows, 0, active?.cogsMethod).closingInventory) : (last.openingInventory || 0)));
       setDraftYear(y); setDraftMonth(m);
     } else {
       const now = new Date();
@@ -5517,13 +5521,13 @@ function MainApp({ user, biometric }) {
   const priorYearsRetainedProfit = (year) => {
     const years = [...new Set(sortedPeriods.filter((p) => p.year < year).map((p) => p.year))];
     return years.reduce((sum, y) => {
-      const yf = yearFigures(sortedPeriods, y, yearOpeningInvOf(y));
+      const yf = yearFigures(sortedPeriods, y, yearOpeningInvOf(y), active?.cogsMethod);
       return sum + (yf ? yf.netProfit : 0);
     }, 0);
   };
 
   // أرقام الشهر النشط: قائمة الدخل للشهر وحده (بعد طرح التراكمي السابق لو الميزان تراكمي)
-  const figures = useMemo(() => (activePeriod ? periodFigures(sortedPeriods, activePeriod, yearOpeningInvOf(activePeriod.year)) : null), [activePeriod, sortedPeriods]);
+  const figures = useMemo(() => (activePeriod ? periodFigures(sortedPeriods, activePeriod, yearOpeningInvOf(activePeriod.year), active?.cogsMethod) : null), [activePeriod, sortedPeriods, active?.cogsMethod]);
   const monthlyPeriodLabel = activePeriod ? `قائمة الدخل الشهرية ◆ ${MONTH_NAMES[activePeriod.month - 1]} ${activePeriod.year}` : "";
   const monthlySourceLabel = activePeriod ? `من واقع ميزان مراجعة شهر ${MONTH_NAMES[activePeriod.month - 1]} ${activePeriod.year}` : "";
 
@@ -5531,8 +5535,8 @@ function MainApp({ user, biometric }) {
   // (وفق العرض المحاسبي السليم: الأصول = الخصوم + حقوق الملكية + أرباح الفترة المتجمعة)
   const balanceFiguresOf = (per) => {
     if (!per) return null;
-    const asOf = computeFigures(per.rows, 0);
-    const ytd = yearFigures(sortedPeriods.filter((p) => p.year === per.year && p.month <= per.month), per.year, yearOpeningInvOf(per.year));
+    const asOf = computeFigures(per.rows, 0, active?.cogsMethod);
+    const ytd = yearFigures(sortedPeriods.filter((p) => p.year === per.year && p.month <= per.month), per.year, yearOpeningInvOf(per.year), active?.cogsMethod);
     const ytdProfit = ytd ? ytd.netProfit : asOf.netProfit;
     const priorProfit = priorYearsRetainedProfit(per.year);
     const totalEquity = asOf.equityAccounts + ytdProfit + priorProfit;
@@ -5541,14 +5545,14 @@ function MainApp({ user, biometric }) {
   const balanceFigures = useMemo(() => balanceFiguresOf(activePeriod), [activePeriod, sortedPeriods]);
 
   const yearPeriods = sortedPeriods.filter((p) => p.year === selectedYear);
-  const annualFigures = useMemo(() => yearFigures(sortedPeriods, selectedYear, yearOpeningInvOf(selectedYear)), [sortedPeriods, selectedYear]);
+  const annualFigures = useMemo(() => yearFigures(sortedPeriods, selectedYear, yearOpeningInvOf(selectedYear), active?.cogsMethod), [sortedPeriods, selectedYear, active?.cogsMethod]);
   const annualPeriodLabel = `قائمة الدخل السنوية ◆ ${selectedYear}`;
   const annualSourceLabel = `${yearPeriods.length} ${yearPeriods.length === 1 ? "شهر فعلي" : "أشهر فعلية"} من واقع الموازين الشهرية`;
 
   // حصص الشركاء لتوزيع الأرباح (من حسابات حقوق الملكية في آخر ميزان)
   const partners = useMemo(() => {
     if (!activePeriod) return [];
-    const lastF = computeFigures(activePeriod.rows, 0);
+    const lastF = computeFigures(activePeriod.rows, 0, active?.cogsMethod);
     const eq = lastF.equityAccountRows.filter((r) => r.amount > 0 && equityBucketOf(r) === "capital");
     const total = eq.reduce((s, p) => s + p.amount, 0);
     if (!total) return [];
@@ -5670,6 +5674,20 @@ function MainApp({ user, biometric }) {
           <div>
             <SectionTitle icon={Upload} sub="ارفع ميزان شهر واحد، أو عدة ملفات دفعة واحدة (كل ملف = شهر) وسيوزّعها التطبيق تلقائيًا">رفع فترة جديدة</SectionTitle>
             {batchBusy && <Card style={{ padding: 16, marginBottom: 12, textAlign: "center", color: GOLD, fontWeight: 600 }}>جارِ رفع ومعالجة الملفات…</Card>}
+            {active && (
+              <Card style={{ padding: 14, marginBottom: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: 13.5, color: INK, marginBottom: 4 }}>طريقة حساب تكلفة البضاعة المباعة</div>
+                <p style={{ fontSize: 10.5, color: "#8a8271", marginBottom: 8, lineHeight: 1.6 }}>
+                  التطبيق بيحدد الطريقة تلقائيًا من الميزان المرفوع (مباشر لو فيه حساب تكلفة بضاعة مباعة برصيد فعلي، وإلا بالمعادلة: مخزون أول + مشتريات − مخزون آخر) — وده ممكن يختلف من شهر للتاني حسب الحسابات المستخدمة في كل ميزان. لو عايز تثبّت طريقة واحدة لكل شهور الشركة دي (عشان متبقاش متذبذبة)، اختارها هنا.
+                </p>
+                <Select value={active.cogsMethod || "auto"} disabled={readOnly}
+                  onChange={(e) => patchCompany({ cogsMethod: e.target.value === "auto" ? "" : e.target.value })}>
+                  <option value="auto">تلقائي (حسب كل ميزان)</option>
+                  <option value="direct">مباشر — من حسابات تكلفة البضاعة المباعة بالميزان</option>
+                  <option value="formula">غير مباشر — بالمعادلة (مخزون أول + مشتريات − مخزون آخر)</option>
+                </Select>
+              </Card>
+            )}
             <UploadZone title="رفع ميزان مراجعة" onFile={onFile} onFiles={onFiles} fileName={file} />
             {(mode === "tree" || mode === "flatTree") && parsedTree && (
               <TreeConfirm parsed={parsedTree} onConfirm={confirmTree} onFallback={() => { setMode("flat"); setMapping(detectFlatColumns(rawRowsFlat) || { headerRow: 0, code: 0, name: 1, debit: 2, credit: 3 }); }} />
@@ -5693,7 +5711,7 @@ function MainApp({ user, biometric }) {
                 <div style={{ fontWeight: 700, marginBottom: 10, color: INK, fontSize: 14 }}>الموازين المرفوعة ({sortedPeriods.length})</div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10 }}>
                   {sortedPeriods.map((p) => {
-                    const pf = computeFigures(p.rows, 0);
+                    const pf = computeFigures(p.rows, 0, active?.cogsMethod);
                     return (
                       <Card key={p.id} style={{ padding: 12 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
@@ -5790,7 +5808,7 @@ function MainApp({ user, biometric }) {
                 buildPdfItems={(which, monthId) => {
                   const p = monthId ? sortedPeriods.find((x) => x.id === monthId) : activePeriod;
                   const mLabel = p ? `${MONTH_NAMES[p.month - 1]} ${p.year}` : "";
-                  const mFig = p ? periodFigures(sortedPeriods, p, yearOpeningInvOf(p.year)) : null;
+                  const mFig = p ? periodFigures(sortedPeriods, p, yearOpeningInvOf(p.year), active?.cogsMethod) : null;
                   const bFig = p ? balanceFiguresOf(p) : null;
                   const items = [];
                   if (which.includes("home")) items.push({
@@ -5860,7 +5878,7 @@ function MainApp({ user, biometric }) {
                 exportData={(which, monthSel) => {
                   const chosen = monthSel === "all" ? sortedPeriods : sortedPeriods.filter((p) => p.id === monthSel);
                   const monthlyList = chosen.map((p) => ({
-                    f: periodFigures(sortedPeriods, p, yearOpeningInvOf(p.year)),
+                    f: periodFigures(sortedPeriods, p, yearOpeningInvOf(p.year), active?.cogsMethod),
                     rows: p.rows,
                     label: `${MONTH_NAMES[p.month - 1]} ${p.year}`,
                   }));
