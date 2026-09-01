@@ -135,6 +135,7 @@ const Share2 = makeIcon("🔗");
 const Eye = makeIcon("👁️");
 const Lock = makeIcon("🔒");
 const Fingerprint = makeIcon("🔐");
+const Compare = makeIcon("⇄");
 
 /* ---------------------------------- ثوابت التصميم ---------------------------------- */
 
@@ -1555,7 +1556,7 @@ function topDebtorsReport(periods, year, topN) {
       return { name, debt, pctOfTotal, note: noteForDebtor(pctOfTotal) };
     })
     .sort((a, b) => b.debt - a.debt)
-    .slice(0, topN || 6);
+    .slice(0, topN || 10);
   const totals = {
     debt: round2(rows.reduce((s, r) => s + r.debt, 0)),
     pctOfTotal: totalDebtAll > 0.004 ? round2(rows.reduce((s, r) => s + r.debt, 0)) / totalDebtAll : 0,
@@ -1569,6 +1570,53 @@ function topDebtorsReport(periods, year, topN) {
     totalDebtAll,
     totals,
   };
+}
+
+/* مقارنة أكبر العملاء مديونية بين فترتين (افتراضيًا آخر فترتين متاحتين، ويقدر المستخدم يغيّر أي منهما):
+   الترتيب بيتم حسب مديونية "الفترة الثانية" (الأحدث)، وكل عميل بيتقارن برصيده في "الفترة الأولى"
+   (صفر لو مكانش ليه مديونية معتبرة وقتها — وده بيتحسب "عميل جديد"). */
+function debtByNameForPeriod(period) {
+  const m = {};
+  (period && period.rows || []).forEach((r) => {
+    if (r.subtype === "customer_debt") m[r.name] = (m[r.name] || 0) + (r.debit - r.credit);
+  });
+  return m;
+}
+function noteForCompare(hasA, diff) {
+  if (!hasA) return "عميل جديد — لم تكن له مديونية معتبرة في الفترة الأولى";
+  if (diff < -0.004) return "تحصيل — المديونية قلّت عن الفترة الأولى";
+  if (diff > 0.004) return "زيادة — المديونية زادت عن الفترة الأولى";
+  return "بدون تغيير يُذكر";
+}
+function topDebtorsCompareReport(periods, keyA, keyB, topN) {
+  const all = (periods || []).slice().sort((a, b) => a.year - b.year || a.month - b.month);
+  const findP = (k) => (k ? all.find((p) => p.year === k.year && p.month === k.month) : null);
+  const pB = findP(keyB) || all[all.length - 1] || null;
+  const pA = findP(keyA) || (pB ? all[all.indexOf(pB) - 1] : null) || null;
+  const mapA = debtByNameForPeriod(pA);
+  const mapB = debtByNameForPeriod(pB);
+  const namesB = Object.keys(mapB).filter((n) => mapB[n] > 0.004);
+  const totalA = round2(Object.keys(mapA).filter((n) => mapA[n] > 0.004).reduce((s, n) => s + mapA[n], 0));
+  const totalB = round2(namesB.reduce((s, n) => s + mapB[n], 0));
+  const rows = namesB
+    .map((name) => {
+      const debtB = round2(mapB[name]);
+      const hasA = mapA[name] > 0.004;
+      const debtA = hasA ? round2(mapA[name]) : 0;
+      const diff = round2(debtB - debtA);
+      const pctChange = hasA ? diff / debtA : null;
+      return { name, debtA, debtB, diff, pctChange, isNew: !hasA, note: noteForCompare(hasA, diff) };
+    })
+    .sort((a, b) => b.debtB - a.debtB)
+    .slice(0, topN || 10);
+  const totals = rows.length ? {
+    debtA: round2(rows.reduce((s, r) => s + r.debtA, 0)),
+    debtB: round2(rows.reduce((s, r) => s + r.debtB, 0)),
+    diff: round2(rows.reduce((s, r) => s + r.diff, 0)),
+  } : null;
+  const labelA = pA ? `${MONTH_NAMES[pA.month - 1]} ${pA.year}` : "—";
+  const labelB = pB ? `${MONTH_NAMES[pB.month - 1]} ${pB.year}` : "—";
+  return { rows, labelA, labelB, totalA, totalB, totals, periodA: pA, periodB: pB };
 }
 
 /* كشف تفصيلي بكل حسابات العملاء والموردين من آخر فترة مرفوعة، مقسّمة 4 مجموعات حسب طبيعة كل حساب:
@@ -2068,6 +2116,54 @@ function debtorsSheetSpec(periods, year, companyName, topN) {
   return buildSheet(rows, [5, 40, 18, 16, 46]);
 }
 
+function compareSheetSpec(periods, companyName, keyA, keyB, topN) {
+  const { rows: data, labelA, labelB, totalA, totalB, totals } = topDebtorsCompareReport(periods, keyA, keyB, topN);
+  const rows = [];
+  brandRows(rows, 7);
+  rows.push({ cells: [{ v: companyName, style: { bg: colorFor("header"), color: "FFFFFFFF", bold: true, sz: 14, align: "center" } }, {}, {}, {}, {}, {}, {}], merge: { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } } });
+  rows.push({ cells: [{ v: `مقارنة أكبر العملاء مديونية — ${labelA} مقابل ${labelB} — إجمالي المديونية ${fmt(totalA)} ← ${fmt(totalB)}`, style: { bg: colorFor("header"), color: "FFFFFFFF", align: "center", wrap: true } }, {}, {}, {}, {}, {}, {}], merge: { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } } });
+  rows.push({ cells: [
+    { v: "م", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true, align: "center" } },
+    { v: "العميل", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true } },
+    { v: `مديونية ${labelA}`, style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true, align: "left" } },
+    { v: `مديونية ${labelB}`, style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true, align: "left" } },
+    { v: "الفرق", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true, align: "left" } },
+    { v: "% التغيير", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true, align: "left" } },
+    { v: "ملاحظات", style: { bg: "FF2C3E57", color: "FFFFFFFF", bold: true } },
+  ] });
+  data.forEach((r, i) => {
+    const diffColor = r.diff < -0.004 ? "FF1E7145" : r.diff > 0.004 ? "FF9C3B34" : "FF000000";
+    rows.push({ cells: [
+      { v: i + 1, style: { align: "center", color: "FF8A8271" } },
+      { v: r.name, style: { wrap: true } },
+      { v: r.debtA, t: "n", style: { align: "left" } },
+      { v: r.debtB, t: "n", style: { align: "left", bold: true } },
+      { v: r.diff, t: "n", style: { align: "left", bold: true, color: diffColor } },
+      r.isNew
+        ? { v: "جديد", style: { align: "left", color: diffColor } }
+        : { v: r.pctChange, t: "n", style: { align: "left", color: diffColor }, z: "+0.00%;-0.00%" },
+      { v: r.note, style: { wrap: true, sz: 9.5 } },
+    ] });
+  });
+  if (!data.length) {
+    rows.push({ cells: [{ v: "لا توجد بيانات كافية للمقارنة بين الفترتين المختارتين.", style: { align: "center", color: "FF8A8271" } }, {}, {}, {}, {}, {}, {}], merge: { s: { r: rows.length, c: 0 }, e: { r: rows.length, c: 6 } } });
+  } else if (totals) {
+    rows.push({ cells: [
+      { v: "", style: { bg: "FFF4EFE2" } },
+      { v: `إجمالي العملاء المعروضين (${data.length})`, style: { bg: "FFF4EFE2", bold: true } },
+      { v: totals.debtA, t: "n", style: { bg: "FFF4EFE2", bold: true, align: "left" } },
+      { v: totals.debtB, t: "n", style: { bg: "FFF4EFE2", bold: true, align: "left" } },
+      { v: totals.diff, t: "n", style: { bg: "FFF4EFE2", bold: true, align: "left", color: totals.diff < 0 ? "FF1E7145" : totals.diff > 0 ? "FF9C3B34" : "FF000000" } },
+      { v: "", style: { bg: "FFF4EFE2" } },
+      { v: "الفرق سالب = تحصيل، موجب = زيادة مديونية", style: { bg: "FFF4EFE2", sz: 9.5 } },
+    ] });
+  }
+  rows.push({ cells: [] });
+  rows.push({ cells: [{ v: "الترتيب حسب مديونية الفترة الثانية (الأحدث). «جديد» يعني عميل لم تكن له مديونية معتبرة في الفترة الأولى.", style: { wrap: true, color: "FF8A8271", sz: 9.5 } }, {}, {}, {}, {}, {}, {}], merge: { s: { r: rows.length, c: 0 }, e: { r: rows.length, c: 6 } } });
+  brandFooter(rows, 7);
+  return buildSheet(rows, [5, 30, 15, 15, 13, 11, 34]);
+}
+
 function csSheetSpec(periods, year, companyName, which = "both") {
   const { asOfLabel, groups } = customersSuppliersReport(periods, year);
   const rows = [];
@@ -2400,7 +2496,7 @@ function trialSheetSpec(rows, companyName, periodLabel) {
   return buildSheet(out, [12, 40, 18, 16, 16]);
 }
 
-function exportWorkbook({ company, periods, companyName, monthlyList, annual, periodLabel, balanceF, balanceLabel, latest, year, zakatDue, zakatData, partners, topDebtorsN, branchSettings, which }) {
+function exportWorkbook({ company, periods, companyName, monthlyList, annual, periodLabel, balanceF, balanceLabel, latest, year, zakatDue, zakatData, partners, topDebtorsN, compareKeyA, compareKeyB, branchSettings, which }) {
   const wb = XLSX.utils.book_new();
   const clip = (s) => s.substring(0, 28).replace(/[\\/?*\[\]:]/g, "");
   if (which.includes("home")) {
@@ -2418,7 +2514,10 @@ function exportWorkbook({ company, periods, companyName, monthlyList, annual, pe
     XLSX.utils.book_append_sheet(wb, balanceSheetSpec(balanceF, companyName, balanceLabel), clip("المركز المالي"));
   }
   if (which.includes("debtors_top")) {
-    XLSX.utils.book_append_sheet(wb, debtorsSheetSpec(periods, year, companyName, topDebtorsN || 6), clip("أكبر العملاء مديونية"));
+    XLSX.utils.book_append_sheet(wb, debtorsSheetSpec(periods, year, companyName, topDebtorsN || 10), clip("أكبر العملاء مديونية"));
+  }
+  if (which.includes("debtors_compare")) {
+    XLSX.utils.book_append_sheet(wb, compareSheetSpec(periods, companyName, compareKeyA || null, compareKeyB || null, topDebtorsN || 10), clip("مقارنة مديونية العملاء"));
   }
   if (which.includes("customers_suppliers")) {
     XLSX.utils.book_append_sheet(wb, csSheetSpec(periods, year, companyName, "both"), clip("كشف العملاء والموردين"));
@@ -2676,8 +2775,8 @@ function ExportBtns({ companyName, exportData, availableMonths, pdfTarget, pdfNa
   const [pdfOpen, setPdfOpen] = useState(false);
   const [busyPdf, setBusyPdf] = useState(false);
   const [ready, setReady] = useState(null);
-  const [sel, setSel] = useState({ home: true, income_monthly: true, income_annual: true, balance: true, trial: false, debtors_top: false, customers_suppliers: false, cs_customers_only: false, cs_suppliers_only: false, expense_review: false, branch_income: false, zakat: true });
-  const [pdfSel, setPdfSel] = useState({ home: false, income_monthly: true, income_annual: true, balance: true, trial: false, debtors_top: false, customers_suppliers: false, cs_customers_only: false, cs_suppliers_only: false, expense_review: false, branch_income: false, zakat: false });
+  const [sel, setSel] = useState({ home: true, income_monthly: true, income_annual: true, balance: true, trial: false, debtors_top: false, debtors_compare: false, customers_suppliers: false, cs_customers_only: false, cs_suppliers_only: false, expense_review: false, branch_income: false, zakat: true });
+  const [pdfSel, setPdfSel] = useState({ home: false, income_monthly: true, income_annual: true, balance: true, trial: false, debtors_top: false, debtors_compare: false, customers_suppliers: false, cs_customers_only: false, cs_suppliers_only: false, expense_review: false, branch_income: false, zakat: false });
   const [monthSel, setMonthSel] = useState("all");
   const [pdfMonthSel, setPdfMonthSel] = useState("");
   const [mergePdf, setMergePdf] = useState(false);
@@ -2690,6 +2789,7 @@ function ExportBtns({ companyName, exportData, availableMonths, pdfTarget, pdfNa
     { k: "income_annual", l: "قائمة الدخل السنوية" },
     { k: "balance", l: "المركز المالي" },
     { k: "debtors_top", l: "أكبر العملاء مديونية" },
+    { k: "debtors_compare", l: "مقارنة أكبر العملاء مديونية" },
     { k: "customers_suppliers", l: "كشف العملاء والموردين (مجمّع)" },
     { k: "cs_customers_only", l: "كشف العملاء فقط" },
     { k: "cs_suppliers_only", l: "كشف الموردين فقط" },
@@ -3334,7 +3434,7 @@ function PerformanceSummary({ f, periodLabel, companyName, monthCount, zakatDue 
   );
 }
 
-function TopDebtorsReport({ periods, year, companyName, topN, setTopN }) {
+function TopDebtorsReport({ periods, year, companyName, topN }) {
   const printId = "print-debtors";
   const { rows, asOfLabel, totalDebtAll, totals } = useMemo(() => topDebtorsReport(periods, year, topN), [periods, year, topN]);
   const pctColor = (p) => (p >= 0.2 ? RED_INK : p >= 0.1 ? "#b7791f" : "inherit");
@@ -3350,15 +3450,6 @@ function TopDebtorsReport({ periods, year, companyName, topN, setTopN }) {
             <div style={{ fontSize: 10.5, opacity: 0.8, marginTop: 3 }}>
               كما في نهاية {asOfLabel} — إجمالي مديونية كل العملاء: {fmt(totalDebtAll)}
             </div>
-          </div>
-          <div className="no-print" style={{ padding: "10px 14px", display: "flex", gap: 8, alignItems: "center", borderBottom: `1px solid ${RULE}` }}>
-            <span style={{ fontSize: 12.5, color: "#6b6455", fontWeight: 600 }}>عدد العملاء المعروضين:</span>
-            {[5, 6, 10].map((n) => (
-              <button key={n} onClick={() => setTopN(n)}
-                style={{ padding: "5px 14px", borderRadius: 14, border: `1px solid ${topN === n ? INK : RULE}`, background: topN === n ? INK : "#fff", color: topN === n ? "#fff" : INK, fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "'IBM Plex Sans Arabic', sans-serif" }}>
-                {n}
-              </button>
-            ))}
           </div>
           <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
             <thead>
@@ -3397,6 +3488,112 @@ function TopDebtorsReport({ periods, year, companyName, topN, setTopN }) {
           <div style={{ padding: "10px 14px", fontSize: 10.5, color: "#8a8271", lineHeight: 1.7 }}>
             «% من إجمالي المديونية» تقيس حصة كل عميل من إجمالي مديونية *كل* العملاء (مش بس المعروضين هنا) —
             نسبة عالية تعني تركّز مخاطرة في عميل واحد. الأرقام هي أرصدة مستحقة كما في نهاية {asOfLabel}.
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function TopDebtorsCompareReport({ periods, companyName, keyA, keyB, topN, availablePeriods, onChangeA, onChangeB, selAId, selBId, readOnly }) {
+  const printId = "print-debtors-compare";
+  const { rows, labelA, labelB, totalA, totalB, totals } = useMemo(
+    () => topDebtorsCompareReport(periods, keyA, keyB, topN),
+    [periods, keyA, keyB, topN]
+  );
+  const diffColor = (diff) => (diff < -0.004 ? "#1E7145" : diff > 0.004 ? RED_INK : "inherit");
+  const maxVal = Math.max(1, ...rows.map((r) => Math.max(r.debtA, r.debtB)));
+  return (
+    <div style={{ maxWidth: 900 }}>
+      {!readOnly && (
+        <div className="no-print" style={{ padding: "10px 14px", display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", background: "#fff", border: `1px solid ${RULE}`, borderRadius: 10, marginBottom: 10 }}>
+          <span style={{ fontSize: 12.5, color: "#6b6455", fontWeight: 600 }}>قارن مديونية:</span>
+          <Select value={selAId || ""} onChange={(e) => onChangeA(e.target.value)} style={{ minWidth: 160 }}>
+            <option value="">تلقائي (الفترة السابقة)</option>
+            {(availablePeriods || []).map((p) => (<option key={p.id} value={p.id}>{MONTH_NAMES[p.month - 1]} {p.year}</option>))}
+          </Select>
+          <span style={{ fontSize: 12.5, color: "#6b6455" }}>مقابل</span>
+          <Select value={selBId || ""} onChange={(e) => onChangeB(e.target.value)} style={{ minWidth: 160 }}>
+            <option value="">تلقائي (آخر فترة)</option>
+            {(availablePeriods || []).map((p) => (<option key={p.id} value={p.id}>{MONTH_NAMES[p.month - 1]} {p.year}</option>))}
+          </Select>
+        </div>
+      )}
+      <Card style={{ padding: 0, maxWidth: 900, background: "#fff", overflow: "hidden" }}>
+        <div id={printId} className="print-area" style={{ background: "#fff", position: "relative" }}>
+          <div className="stmt-watermark" />
+          <div style={{ background: INK, color: "#fff", textAlign: "center", padding: "14px 10px" }}>
+            <div style={{ fontFamily: "'Markazi Text', serif", fontSize: 22, fontWeight: 700 }}>{companyName}</div>
+            <div style={{ fontSize: 14, marginTop: 2 }}>مقارنة أكبر العملاء مديونية</div>
+            <div style={{ fontSize: 10.5, opacity: 0.8, marginTop: 3 }}>
+              {labelA} مقابل {labelB} — إجمالي مديونية كل العملاء: {fmt(totalA)} ← {fmt(totalB)}
+            </div>
+          </div>
+          {rows.length > 0 && (
+            <div style={{ padding: "16px 14px 6px" }}>
+              <div style={{ display: "flex", gap: 16, fontSize: 11, marginBottom: 12, color: "#4a4536" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 10, height: 10, borderRadius: 2, background: "#2a78d6", display: "inline-block" }} />{labelA}</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 5 }}><span style={{ width: 10, height: 10, borderRadius: 2, background: "#1baf7a", display: "inline-block" }} />{labelB}</span>
+              </div>
+              {rows.map((r, i) => (
+                <div key={i} style={{ marginBottom: 11 }}>
+                  <div style={{ fontSize: 11, marginBottom: 3, fontWeight: 600, color: INK }}>{r.name}</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 3, direction: "ltr" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <div style={{ height: 11, borderRadius: 3, background: "#2a78d6", width: `${Math.max((r.debtA / maxVal) * 100, r.debtA > 0 ? 1.5 : 0)}%` }} />
+                      <span style={{ fontSize: 9.5, color: "#4a4536" }}>{fmt(r.debtA)}</span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <div style={{ height: 11, borderRadius: 3, background: "#1baf7a", width: `${Math.max((r.debtB / maxVal) * 100, r.debtB > 0 ? 1.5 : 0)}%` }} />
+                      <span style={{ fontSize: 9.5, color: "#4a4536" }}>{fmt(r.debtB)}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
+            <thead>
+              <tr style={{ background: "#2c3e57", color: "#fff", fontSize: 10.5 }}>
+                <th style={{ padding: "6px 4px", width: 22 }}>م</th>
+                <th style={{ padding: "6px 4px", textAlign: "right", width: "21%" }}>العميل</th>
+                <th style={{ padding: "6px 4px", textAlign: "left", width: "14%" }}>{labelA}</th>
+                <th style={{ padding: "6px 4px", textAlign: "left", width: "14%" }}>{labelB}</th>
+                <th style={{ padding: "6px 4px", textAlign: "left", width: "13%" }}>الفرق</th>
+                <th style={{ padding: "6px 4px", textAlign: "left", width: "10%" }}>% التغيير</th>
+                <th style={{ padding: "6px 4px", textAlign: "right" }}>ملاحظات</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i} style={{ borderBottom: "1px solid #e6e1d4", background: i % 2 ? "#fbf9f4" : "#fff" }}>
+                  <td style={{ padding: "7px 4px", width: 22, color: "#8a8271", fontSize: 9.5, textAlign: "center" }}>{i + 1}</td>
+                  <td style={{ padding: "7px 4px", fontSize: 10.5, wordBreak: "break-word" }}>{r.name}</td>
+                  <td style={{ padding: "7px 4px", textAlign: "left", direction: "ltr", fontSize: 10.5 }}>{fmt(r.debtA)}</td>
+                  <td style={{ padding: "7px 4px", textAlign: "left", direction: "ltr", fontSize: 10.5, fontWeight: 600 }}>{fmt(r.debtB)}</td>
+                  <td style={{ padding: "7px 4px", textAlign: "left", direction: "ltr", fontSize: 10.5, fontWeight: 700, color: diffColor(r.diff) }}>{r.diff > 0.004 ? "+" : ""}{fmt(r.diff)}</td>
+                  <td style={{ padding: "7px 4px", textAlign: "left", direction: "ltr", fontSize: 10.5, color: diffColor(r.diff) }}>{r.isNew ? "جديد" : `${r.pctChange >= 0 ? "+" : ""}${(r.pctChange * 100).toFixed(1)}%`}</td>
+                  <td style={{ padding: "7px 4px", fontSize: 9, color: "#4a4536", lineHeight: 1.5, wordBreak: "break-word" }}>{r.note}</td>
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr><td colSpan={7} style={{ padding: 22, textAlign: "center", color: "#847c69", fontSize: 12.5 }}>لا توجد بيانات كافية للمقارنة بين الفترتين المختارتين.</td></tr>
+              )}
+              {rows.length > 0 && totals && (
+                <tr style={{ background: "#F4EFE2", fontWeight: 700, borderTop: `2px solid ${INK}` }}>
+                  <td style={{ padding: "8px 4px" }}></td>
+                  <td style={{ padding: "8px 4px", fontSize: 10.5 }}>إجمالي العملاء المعروضين ({rows.length})</td>
+                  <td style={{ padding: "8px 4px", textAlign: "left", direction: "ltr", fontSize: 10.5 }}>{fmt(totals.debtA)}</td>
+                  <td style={{ padding: "8px 4px", textAlign: "left", direction: "ltr", fontSize: 10.5 }}>{fmt(totals.debtB)}</td>
+                  <td style={{ padding: "8px 4px", textAlign: "left", direction: "ltr", fontSize: 10.5, color: diffColor(totals.diff) }}>{totals.diff > 0.004 ? "+" : ""}{fmt(totals.diff)}</td>
+                  <td style={{ padding: "8px 4px" }}></td>
+                  <td style={{ padding: "8px 4px", fontSize: 9, color: "#4a4536" }}>الفرق سالب = تحصيل، موجب = زيادة مديونية</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+          <div style={{ padding: "10px 14px", fontSize: 10.5, color: "#8a8271", lineHeight: 1.7 }}>
+            الترتيب حسب مديونية {labelB} (الأحدث). «جديد» يعني عميل لم تكن له مديونية معتبرة في {labelA}.
           </div>
         </div>
       </Card>
@@ -4572,6 +4769,7 @@ const STMT_TABS = [
   { key: "balance", label: "المركز المالي", icon: Scale },
   { key: "equity", label: "التغير في حقوق الملكية", icon: RefreshCw },
   { key: "debtors_top", label: "أكبر العملاء مديونية", icon: Users },
+  { key: "debtors_compare", label: "مقارنة المديونية", icon: Compare },
   { key: "customers_suppliers", label: "كشف العملاء والموردين", icon: Ledger },
   { key: "expense_review", label: "مقارنة المصروفات بالمبيعات", icon: MoneyFlag },
   { key: "branch_income", label: "الدخل حسب الفرع", icon: Scale },
@@ -4929,7 +5127,9 @@ function MainApp({ user, biometric }) {
   const [screen, setScreen] = useState("companies");
   const [step, setStep] = useState("upload");
   const [stmtTab, setStmtTab] = useState("home");
-  const [topDebtorsN, setTopDebtorsN] = useState(6);
+  const topDebtorsN = 10; // ثابت لكل الشركات دايمًا
+  const [compareAId, setCompareAId] = useState("");
+  const [compareBId, setCompareBId] = useState("");
 
   const [file, setFile] = useState(null);
   const [parsedTree, setParsedTree] = useState(null);
@@ -5081,6 +5281,9 @@ function MainApp({ user, biometric }) {
   const sortedPeriods = [...periods].sort((a, b) => (a.year - b.year) || (a.month - b.month));
   const activePeriod = sortedPeriods.find((p) => p.id === activePeriodId) || sortedPeriods[sortedPeriods.length - 1] || null;
   const availableYears = Array.from(new Set(sortedPeriods.map((p) => p.year))).sort();
+  const periodKeyOf = (id) => { const p = sortedPeriods.find((x) => x.id === id); return p ? { year: p.year, month: p.month } : null; };
+  const compareKeyA = periodKeyOf(compareAId);
+  const compareKeyB = periodKeyOf(compareBId);
 
   // ===== تعديل تصنيف حساب من داخل القوائم =====
   const GROUP_TO_CAT = {
@@ -5822,8 +6025,8 @@ function MainApp({ user, biometric }) {
               <div style={{ marginTop: 8 }}>
               <ExportBtns
                 companyName={active.name}
-                pdfTarget={{ home: "print-home", income_monthly: "print-income", income_annual: "print-income", balance: "print-balance", equity: "print-equity", debtors_top: "print-debtors", customers_suppliers: "print-cs", expense_review: "print-exp", branch_income: "print-branch", trial: "print-trial" }[stmtTab] || null}
-                pdfLandscape={stmtTab === "home" || stmtTab === "trial" || stmtTab === "debtors_top" || stmtTab === "expense_review" || stmtTab === "branch_income"}
+                pdfTarget={{ home: "print-home", income_monthly: "print-income", income_annual: "print-income", balance: "print-balance", equity: "print-equity", debtors_top: "print-debtors", debtors_compare: "print-debtors-compare", customers_suppliers: "print-cs", expense_review: "print-exp", branch_income: "print-branch", trial: "print-trial" }[stmtTab] || null}
+                pdfLandscape={stmtTab === "home" || stmtTab === "trial" || stmtTab === "debtors_top" || stmtTab === "debtors_compare" || stmtTab === "expense_review" || stmtTab === "branch_income"}
                 buildPdfItems={(which, monthId) => {
                   const p = monthId ? sortedPeriods.find((x) => x.id === monthId) : activePeriod;
                   const mLabel = p ? `${MONTH_NAMES[p.month - 1]} ${p.year}` : "";
@@ -5848,8 +6051,15 @@ function MainApp({ user, biometric }) {
                   });
                   if (which.includes("debtors_top")) items.push({
                     landscape: true, title: `أكبر العملاء مديونية ${selectedYear} لشركة ${active.name}`,
-                    element: <TopDebtorsReport periods={sortedPeriods} year={selectedYear} companyName={active.name} topN={topDebtorsN} setTopN={() => {}} />,
+                    element: <TopDebtorsReport periods={sortedPeriods} year={selectedYear} companyName={active.name} topN={topDebtorsN} />,
                   });
+                  if (which.includes("debtors_compare")) {
+                    const cmp = topDebtorsCompareReport(sortedPeriods, compareKeyA, compareKeyB, topDebtorsN);
+                    items.push({
+                      landscape: true, title: `مقارنة أكبر العملاء مديونية ${cmp.labelA} مقابل ${cmp.labelB} لشركة ${active.name}`,
+                      element: <TopDebtorsCompareReport periods={sortedPeriods} companyName={active.name} keyA={compareKeyA} keyB={compareKeyB} topN={topDebtorsN} readOnly />,
+                    });
+                  }
                   if (which.includes("customers_suppliers")) items.push({
                     landscape: false, title: `كشف أرصدة العملاء والموردين ${selectedYear} لشركة ${active.name}`,
                     element: <CustomersSuppliersReport periods={sortedPeriods} year={selectedYear} companyName={active.name} which="both" printIdOverride="print-cs-both" />,
@@ -5887,6 +6097,7 @@ function MainApp({ user, biometric }) {
                   : stmtTab === "balance" ? `المركز المالي شهر ${activePeriod ? MONTH_NAMES[activePeriod.month - 1] + " " + activePeriod.year : ""} لشركة ${active.name}`
                   : stmtTab === "equity" ? `التغير في حقوق الملكية شهر ${activePeriod ? MONTH_NAMES[activePeriod.month - 1] + " " + activePeriod.year : ""} لشركة ${active.name}`
                   : stmtTab === "debtors_top" ? `أكبر العملاء مديونية ${selectedYear} لشركة ${active.name}`
+                  : stmtTab === "debtors_compare" ? `مقارنة أكبر العملاء مديونية لشركة ${active.name}`
                   : stmtTab === "customers_suppliers" ? `كشف أرصدة العملاء والموردين ${selectedYear} لشركة ${active.name}`
                   : stmtTab === "expense_review" ? `مقارنة المصروفات بالمبيعات ${selectedYear} لشركة ${active.name}`
                   : stmtTab === "branch_income" ? `قائمة الدخل حسب الفرع ${selectedYear} لشركة ${active.name}`
@@ -5916,6 +6127,8 @@ function MainApp({ user, biometric }) {
                     zakatData: active.zakat,
                     partners,
                     topDebtorsN,
+                    compareKeyA,
+                    compareKeyB,
                     branchSettings: active.branchSettings,
                     which,
                   });
@@ -5946,7 +6159,11 @@ function MainApp({ user, biometric }) {
               <EquityStatement rows={activePeriod.rows} f={figures} opening={active.opening || {}} setOpening={(o) => patchCompany({ opening: o })} periodLabel={monthlyPeriodLabel} readOnly={readOnly} />
             )}
             {stmtTab === "debtors_top" && (
-              <TopDebtorsReport periods={sortedPeriods} year={selectedYear} companyName={active.name} topN={topDebtorsN} setTopN={setTopDebtorsN} />
+              <TopDebtorsReport periods={sortedPeriods} year={selectedYear} companyName={active.name} topN={topDebtorsN} />
+            )}
+            {stmtTab === "debtors_compare" && (
+              <TopDebtorsCompareReport periods={sortedPeriods} companyName={active.name} keyA={compareKeyA} keyB={compareKeyB} topN={topDebtorsN}
+                availablePeriods={sortedPeriods} selAId={compareAId} selBId={compareBId} onChangeA={setCompareAId} onChangeB={setCompareBId} />
             )}
             {stmtTab === "customers_suppliers" && (
               <CustomersSuppliersReport periods={sortedPeriods} year={selectedYear} companyName={active.name} />
