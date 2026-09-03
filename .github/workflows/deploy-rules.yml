@@ -1,0 +1,50 @@
+name: نشر قواعد Firestore
+
+# بيشتغل تلقائيًا لما firestore.rules يتغيّر على main،
+# وكمان بإيدك من تبويب Actions وقت ما تحب.
+on:
+  push:
+    branches: [main]
+    paths: ["firestore.rules"]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: تثبيت firebase-tools
+        run: npm install -g firebase-tools@13
+
+      # مفتاح حساب الخدمة بيتكتب في ملف مؤقت جوّه الـ runner.
+      # الـ runner بيتمسح بالكامل بعد كل تشغيل، والمفتاح نفسه مخزّن
+      # في GitHub Secrets — مبيظهرش في السجلات ومحدش يقدر يقراه.
+      - name: تجهيز بيانات الاعتماد
+        run: |
+          printf '%s' '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > "$RUNNER_TEMP/sa.json"
+          if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$RUNNER_TEMP/sa.json"; then
+            echo "::error::محتوى FIREBASE_SERVICE_ACCOUNT مش JSON صالح. تأكد إنك لزقت الملف كامل من { لـ }."
+            exit 1
+          fi
+
+      # الوقاية الأهم: لو القواعد فيها غلط إملائي، الخطوة دي بتفشل
+      # من غير ما تلمس المشروع الحقيقي. أحسن بكتير من إننا ننشر قواعد
+      # مكسورة ونقفل التطبيق على المستخدمين.
+      - name: التحقق من صحة القواعد قبل النشر
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+        run: firebase deploy --only firestore:rules --project selim-financ --dry-run --non-interactive
+
+      - name: النشر
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+        run: firebase deploy --only firestore:rules --project selim-financ --non-interactive
+
+      - name: مسح بيانات الاعتماد
+        if: always()
+        run: rm -f "$RUNNER_TEMP/sa.json"
