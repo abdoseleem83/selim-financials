@@ -1,0 +1,13 @@
+{
+  "name": "selim-financials",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Selim Finance — القوائم المالية والزكاة",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@babel/standalone": "7.29.8"
+  }
+}

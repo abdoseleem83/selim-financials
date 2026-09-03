@@ -1,0 +1,124 @@
+rules_version = '2';
+
+// قواعد أمان Firestore لتطبيق Selim Finance
+//
+// مهم: القواعد دي هي خط الدفاع الوحيد عن البيانات. كل التحقق اللي في التطبيق
+// (getRole / readOnly) بيتحكم في شكل الواجهة بس — أي حد معاه حساب يقدر يكلّم
+// Firestore مباشرة من الـ SDK ويتخطّى الواجهة تمامًا.
+//
+// نموذج الصلاحيات المطبَّق هنا هو نفسه اللي في التطبيق:
+//   المالك (ownerUid)        : قراءة + كتابة + حذف + إدارة المشاركة
+//   المحرّر (editorEmails)   : قراءة + كتابة على البيانات، من غير إدارة مشاركة ولا حذف
+//   المشاهد (viewerEmails)   : قراءة فقط
+//
+// البريد بيتخزّن بحروف صغيرة عند المشاركة، لكن بريد المستخدم في التوكن ممكن يكون
+// بحروف كبيرة — عشان كده كل المقارنات هنا بـ lower().
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // ⚠ تحذير أمني مهم:
+    // التطبيق بيسجّل المستخدمين بـ createUserWithEmailAndPassword من غير أي تحقق من البريد.
+    // يعني أي حد يقدر يعمل حساب ببريد مش بتاعه، ولو الشركة متشاركة مع البريد ده يبقى
+    // دخل عليها. القواعد هنا ما تقدرش تصلّح ده لوحدها — الحل إن التطبيق يبعت
+    // sendEmailVerification() ويرفض الدخول قبل التفعيل، وساعتها يتفعّل الشرط ده هنا:
+    //     && request.auth.token.email_verified == true
+    // مش مفعّل دلوقتي عشان تفعيله هيقفل التطبيق على كل المستخدمين الحاليين.
+    function myEmails() {
+      return request.auth.token.email is string
+        ? [request.auth.token.email, request.auth.token.email.lower()]
+        : [];
+    }
+
+    function isOwner(company) {
+      return signedIn() && company.ownerUid == request.auth.uid;
+    }
+
+    // بنقارن بالشكلين (الأصلي والموحّد) عشان المستندات القديمة اللي اتخزن فيها
+    // بريد بحروف كبيرة تفضل شغالة زي ما التطبيق بيعمل بالظبط
+    function isEditor(company) {
+      return signedIn()
+        && company.editorEmails is list
+        && company.editorEmails.hasAny(myEmails());
+    }
+
+    function isViewer(company) {
+      return signedIn()
+        && company.viewerEmails is list
+        && company.viewerEmails.hasAny(myEmails());
+    }
+
+    function canRead(company) {
+      return isOwner(company) || isEditor(company) || isViewer(company);
+    }
+
+    function canWrite(company) {
+      return isOwner(company) || isEditor(company);
+    }
+
+    // بيانات الشركة الأم — تُقرأ مرة واحدة للتحقق من صلاحيات المجموعات الفرعية
+    function companyDoc(companyId) {
+      return get(/databases/$(database)/documents/companies/$(companyId)).data;
+    }
+
+    match /companies/{companyId} {
+
+      allow get, list: if canRead(resource.data);
+
+      // الإنشاء: لازم المنشئ يحطّ نفسه مالكًا، وميقدرش يبدأ بقوائم مشاركة مزوّرة
+      allow create: if signedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0;
+
+      // الحذف للمالك فقط
+      allow delete: if isOwner(resource.data);
+
+      // التعديل: المالك يعدّل أي حاجة. المحرّر يعدّل البيانات بس —
+      // ممنوع يغيّر المالك أو يرفّع نفسه أو يضيف/يشيل حد من المشاركة.
+      allow update: if isOwner(resource.data)
+        || (
+          isEditor(resource.data)
+          && request.resource.data.ownerUid == resource.data.ownerUid
+          && request.resource.data.editorEmails == resource.data.editorEmails
+          && request.resource.data.viewerEmails == resource.data.viewerEmails
+        );
+
+      // الفترات (الموازين الشهرية)
+      match /periods/{periodId} {
+        allow read: if canRead(companyDoc(companyId));
+        allow write: if canWrite(companyDoc(companyId));
+      }
+
+      // الأرشيف والفترات اللي جوّاه
+      match /archives/{archiveId} {
+        allow read: if canRead(companyDoc(companyId));
+        allow write: if canWrite(companyDoc(companyId));
+
+        match /periods/{periodId} {
+          allow read: if canRead(companyDoc(companyId));
+          allow write: if canWrite(companyDoc(companyId));
+        }
+      }
+
+      // أي مجموعة فرعية جديدة تتضاف مستقبلاً تبقى ممنوعة لحد ما تتكتب لها قاعدة صريحة
+      match /{document=**} {
+        allow read, write: if false;
+      }
+    }
+
+    // خريطة التصنيف المحفوظة — خاصة بكل مستخدم، الاسم بالشكل classmap_{uid}
+    match /settings/{docId} {
+      allow read, write: if signedIn() && docId == 'classmap_' + request.auth.uid;
+    }
+
+    // كل ما عدا ذلك ممنوع
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
