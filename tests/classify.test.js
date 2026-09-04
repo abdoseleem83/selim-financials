@@ -70,3 +70,31 @@ test("مجموعات المركز المالي بتشتغل مع الإملاء 
   assert.equal(f.balanceGroups.banks.total, 2000);
   assert.equal(f.balanceGroups.deposits.total, 1200, "الشكلين لازم يقعوا في التأمين");
 });
+
+test("حساب اسمه «مصاريف» بيفضل مصروف حتى لو فيه كلمة توحي بأصل", () => {
+  // اتكشف في ميزان حقيقي: «مصاريف- نقل وشحن بضاعه» كان بيتصنّف أصل متداول
+  // بسبب كلمة «بضاعه»، ويدخل في المخزون كمان — فيتضخّم المخزون، وتتشوّه
+  // تكلفة البضاعة المباعة (لأنها بتتحسب بالمعادلة من المخزون)، ويتضخّم الربح.
+  // والمركز المالي بيفضل متزن لأن الطرفين بيتحركوا بنفس المقدار، فالخطأ مش بيتكشف.
+  assert.equal(guessCategory("مصاريف- نقل وشحن  بضاعه"), "opex");
+  assert.equal(guessCategory("مصاريف- ايجار المخزن"), "opex");
+  assert.equal(guessCategory("مصروفات بنكية"), "opex");
+  assert.equal(guessCategory("م/ نقل وانتقالات"), "opex");
+
+  // ولازم الحسابات الحقيقية دي تفضل زي ما هي
+  assert.equal(guessCategory("بضاعة بالمخازن"), "asset_current");
+  assert.equal(guessCategory("المخزون الحالي (ميزانية)"), "asset_current");
+  assert.equal(guessCategory("الصندوق"), "asset_current");
+  assert.equal(guessCategory("مصروفات مستحقة"), "liability_current");
+});
+
+test("الحساب المصنّف غلط كان بيتحسب مخزون ويشوّه تكلفة البضاعة", () => {
+  const row = (o) => ({ code: o.code, name: o.name, category: guessCategory(o.name),
+    debit: o.debit || 0, credit: o.credit || 0, chain: [], subtype: null, bsGroup: null });
+  const f = computeFigures([
+    row({ code: "1", name: "بضاعة بالمخازن", debit: 100000 }),
+    row({ code: "2", name: "مصاريف- نقل وشحن  بضاعه", debit: 8000 }),
+  ], 0);
+  assert.equal(f.closingInventory, 100000, "مصروف النقل مش مخزون");
+  assert.equal(f.opex, 8000, "لازم يتحسب مصروف");
+});
