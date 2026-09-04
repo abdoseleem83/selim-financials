@@ -70,3 +70,48 @@ test("مجموعات المركز المالي بتشتغل مع الإملاء 
   assert.equal(f.balanceGroups.banks.total, 2000);
   assert.equal(f.balanceGroups.deposits.total, 1200, "الشكلين لازم يقعوا في التأمين");
 });
+
+test("حساب اسمه «مصاريف» بيفضل مصروف حتى لو فيه كلمة توحي بأصل", () => {
+  // اتكشف في ميزان حقيقي: «مصاريف- نقل وشحن بضاعه» كان بيتصنّف أصل متداول
+  // بسبب كلمة «بضاعه»، ويدخل في المخزون كمان — فالمبلغ بيتحسب مرتين:
+  // بيضخّم الأصول، وبينقّص تكلفة البضاعة المباعة (المحسوبة بالمعادلة من المخزون).
+  // على ميزان حقيقي بـ٨ شهور: ربح السنة اتضخّم 217,980.60 والمركز المالي اختل بـ108,990.30.
+  assert.equal(guessCategory("مصاريف- نقل وشحن  بضاعه"), "opex");
+  assert.equal(guessCategory("مصاريف- ايجار المخزن"), "opex");
+  assert.equal(guessCategory("مصروفات بنكية"), "opex");
+  assert.equal(guessCategory("م/ نقل وانتقالات"), "opex");
+
+  // ولازم الحسابات الحقيقية دي تفضل زي ما هي
+  assert.equal(guessCategory("بضاعة بالمخازن"), "asset_current");
+  assert.equal(guessCategory("المخزون الحالي (ميزانية)"), "asset_current");
+  assert.equal(guessCategory("الصندوق"), "asset_current");
+  assert.equal(guessCategory("مصروفات مستحقة"), "liability_current");
+});
+
+test("الحساب المصنّف غلط كان بيتحسب مخزون ويشوّه تكلفة البضاعة", () => {
+  const row = (o) => ({ code: o.code, name: o.name, category: guessCategory(o.name),
+    debit: o.debit || 0, credit: o.credit || 0, chain: [], subtype: null, bsGroup: null });
+  const f = computeFigures([
+    row({ code: "1", name: "بضاعة بالمخازن", debit: 100000 }),
+    row({ code: "2", name: "مصاريف- نقل وشحن  بضاعه", debit: 8000 }),
+  ], 0);
+  assert.equal(f.closingInventory, 100000, "مصروف النقل مش مخزون");
+  assert.equal(f.opex, 8000, "لازم يتحسب مصروف");
+});
+
+test("حساب اسمه «إهلاك» مصروف، و«مجمع إهلاك» أصل مقابل", () => {
+  // اتكشف في ميزان حقيقي: «اهلاك- اثاث ومكتب» كان بيتصنّف أصل ثابت بسبب
+  // كلمة «اثاث»، مع إنه مصروف إهلاك الفترة. نفس الحكاية مع «اهلاك- سيارات».
+  assert.equal(guessCategory("اهلاك- اثاث ومكتب وكرسي ومروحه"), "opex");
+  assert.equal(guessCategory("اهلاك- سيارات"), "opex");
+  assert.equal(guessCategory("إهلاك المباني"), "opex");
+  assert.equal(guessCategory("استهلاك أصول"), "opex");
+
+  // «مجمع إهلاك» أصل مقابل — لازم يفضل ضمن الأصول الثابتة
+  assert.equal(guessCategory("مجمع اهلاك الاثاث"), "asset_noncurrent");
+  assert.equal(guessCategory("مجمع إهلاك السيارات"), "asset_noncurrent");
+
+  // والأصول نفسها زي ما هي
+  assert.equal(guessCategory("أصول- اثاث ومكتب"), "asset_noncurrent");
+  assert.equal(guessCategory("سيارات"), "asset_noncurrent");
+});
