@@ -17,16 +17,21 @@ import { readFileSync, writeFileSync, mkdirSync, copyFileSync } from "node:fs";
 import { transform } from "@babel/standalone";
 
 const SRC = "app.src.jsx";
-const CALC = "src/calc.js";
+const MODULES = ["src/calc.js", "src/parse.js"]; // الترتيب مهم: parse بتعتمد على calc
 const OUT = "app.js";
 
 const ui = readFileSync(SRC, "utf8");
 
-// src/calc.js وحدة ES عشان الاختبارات تقدر تستوردها، لكن التطبيق سكربت كلاسيكي
-// في المتصفح — فبنشيل كلمة export وقت الدمج وبس. التعريفات نفسها ما بتتغيّرش.
-const calc = readFileSync(CALC, "utf8").replace(/^export (function |const )/gm, "$1");
+// الوحدات دي ES modules عشان الاختبارات تقدر تستوردها، لكن التطبيق سكربت
+// كلاسيكي في المتصفح — فبنشيل كلمة export وسطور الـ import وقت الدمج وبس.
+// التعريفات نفسها ما بتتغيّرش، وكلها بتبقى في نفس النطاق العام.
+const modules = MODULES.map((f) =>
+  readFileSync(f, "utf8")
+    .replace(/^import[^;]*;\s*$/gm, "")           // الاستيراد بين الوحدات مالوش لازمة بعد الدمج
+    .replace(/^export (function |const )/gm, "$1")
+).join("\n\n");
 
-const source = calc + "\n\n" + ui;
+const source = modules + "\n\n" + ui;
 
 const vMatch = ui.match(/const\s+APP_VERSION\s*=\s*"([^"]+)"/);
 if (!vMatch) {
@@ -80,7 +85,7 @@ for (const [from, to] of VENDOR) {
 
 writeFileSync(
   OUT,
-  `/* مُولَّد تلقائيًا من ${CALC} + ${SRC} — متعدلش هنا. شغّل: npm run build */\n` + code
+  `/* مُولَّد تلقائيًا من ${MODULES.join(" + ")} + ${SRC} — متعدلش هنا. شغّل: npm run build */\n` + code
 );
 
 // رقم النسخة في مكان واحد (APP_VERSION) وبيتوزّع على باقي الملفات من هنا
