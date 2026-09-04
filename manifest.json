@@ -3,8 +3,8 @@
   "short_name": "Selim Finance",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#FBF7EE",
-  "theme_color": "#0E5C7F",
+  "background_color": "#F5F8FC",
+  "theme_color": "#0C3C6B",
   "dir": "rtl",
   "lang": "ar",
   "icons": [
