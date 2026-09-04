@@ -13,7 +13,7 @@
  * تخزين استجابات فايربيز في الكاش ممكن يورّي المستخدم بيانات قديمة.
  */
 
-const VERSION = "7.42";
+const VERSION = "7.43";
 const CACHE = "selim-shell-" + VERSION;
 
 const SHELL = [
