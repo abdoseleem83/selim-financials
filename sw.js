@@ -13,7 +13,7 @@
  * تخزين استجابات فايربيز في الكاش ممكن يورّي المستخدم بيانات قديمة.
  */
 
-const VERSION = "7.43";
+const VERSION = "7.44";
 const CACHE = "selim-shell-" + VERSION;
 
 const SHELL = [
@@ -35,6 +35,8 @@ const LIBS = [
   "./vendor/firebase-app-compat.js",
   "./vendor/firebase-auth-compat.js",
   "./vendor/firebase-firestore-compat.js",
+  "./vendor/html2canvas.min.js",
+  "./vendor/jspdf.umd.min.js",
 ];
 
 self.addEventListener("install", (e) => {

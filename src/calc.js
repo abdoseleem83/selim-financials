@@ -57,6 +57,14 @@ export function arMatch(re, text) {
   return normRe(re).test(normAr(text));
 }
 
+/* مفتاح الحساب: الكود لو موجود، وإلا الاسم.
+ * لازم يكون الكود هو الأساس عشان حسابين بنفس الاسم في فرعين مختلفين
+ * مايتلغبطوش — لا في التصنيف ولا في بنود الزكاة. */
+export function acctKey(r) {
+  if (!r) return "n:";
+  return r.code ? "c:" + String(r.code).trim() : "n:" + String(r.name || "").trim();
+}
+
 export function guessCategory(name = "", code = "", context = "", nature = null) {
   const n = `${name} ${context}`;
   // تكلفة البضاعة المباعة: لازم اسم الحساب نفسه هو اللي يدل على التكلفة، مش اسم أب بعيد

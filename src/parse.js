@@ -4,7 +4,7 @@
  * كل القوائم بعد كده، من غير أي مؤشر إن فيه حاجة حصلت.
  * الاختبارات في tests/parse.test.js و tests/zakat.test.js.
  */
-import { cleanAccName, parseAmountCell, parseSignedNum, numericFromCell, guessCategory, computeFigures } from "./calc.js";
+import { round2, equityBucketOf, arMatch, cleanAccName, parseAmountCell, parseSignedNum, numericFromCell, guessCategory, computeFigures, acctKey } from "./calc.js";
 
 // معرّفات المستندات في Firestore: Math.random بـ8 محارف مش مضمونة التفرّد،
 // وتصادم واحد معناه فترة بتكتب فوق فترة تانية. crypto.randomUUID أقوى بكتير،
@@ -492,4 +492,69 @@ export function computeZakatTotal(zakatData) {
     const share = zakatBase * (totalEquity ? p.amount / totalEquity : 0);
     return s + (share >= nisab ? share * (rate / 100) * proration : 0);
   }, 0);
+}
+
+/* بناء بنود وعاء الزكاة من الميزان.
+ *
+ * قاعدة حاكمة: مبلغ أي بند = مجموع تفاصيله بالظبط. المستند رسمي، فلو
+ * الإجمالي جاي من مصدر والتفاصيل من مصدر تاني بيبقى بيناقض نفسه.
+ *
+ * واتجاه الإشارة واحد في القسم كله: بند الخصم بيبان موجب لو رصيده دائن.
+ */
+export function buildZakatItems(f, rows, mkId) {
+  const uidFn = mkId || uid;
+  // القاعدة الحاكمة: مبلغ أي بند = مجموع تفاصيله بالظبط
+  const sumSrc = (srcs) => round2((srcs || []).reduce((t, x) => t + (x.amount || 0), 0));
+  const taxLiab = round2(f.liabilityCurrentRows.filter((r) => /ضريبة/.test(r.name)).reduce((s, r) => s + r.amount, 0));
+  // تفاصيل كل بند من الحسابات الفعلية في الميزان
+  // مهم: لا نأخذ Math.abs هنا — لو حساب فرعي رصيده بعكس طبيعة مجموعته (مثلاً صندوق نقدية برصيد دائن)
+  // لازم يفضل بالسالب عشان يُخصم صح من إجمالي البند، مش يتجمع عليه غلط
+  // المصادر بتحمل كود الحساب كمان مش الاسم بس — عشان حسابين بنفس الاسم
+  // في فرعين مختلفين مايتلغبطوش ولا يتشالوا بالغلط عند الإضافة أو الحذف
+  const srcOf = (arr) => (arr || []).map((r) => ({ code: r.code, name: r.name, amount: round2(r.amount !== undefined ? r.amount : ((r.debit || 0) - (r.credit || 0))) })).filter((s) => Math.abs(s.amount) > 0.004);
+  // اتجاه الإشارة لازم يبقى واحد في القسم كله. بنود الخصوم التانية (دائنون،
+  // ضرائب، جاري الشركاء) جاية من liabilityCurrentRows/equityAccountRows وقيمتها
+  // (دائن − مدين)، فالخصم بيبان موجب. لكن bySub كانت بتحسب (مدين − دائن)،
+  // فبند «موردون» كان إجماليه موجب وتفاصيله سالبة — تناقض على وش المستند.
+  const bySub = (st, isLiab) => srcOf((rows || []).filter((r) => r.subtype === st).map((r) => ({
+    code: r.code, name: r.name,
+    amount: isLiab ? ((r.credit || 0) - (r.debit || 0)) : ((r.debit || 0) - (r.credit || 0)),
+  })));
+  // مهم: نفس القاعدة اللي بتحسب المبلغ (f.closingInventory) لازم تحكم التفاصيل كمان.
+  // قبل كده التفاصيل كانت من balanceGroups.inventory اللي بيطابق «مخزن» كمان،
+  // فحساب زي «ايجار مقدم مخزن البرج» كان بيدخل في تفاصيل المخزون (وهو مش مخزون)
+  // ويظهر في بند «المدينون الآخرون» في نفس الوقت — تفاصيل ما بتجمعش على الإجمالي.
+  const invSrc = srcOf((rows || [])
+    .filter((r) => (r.category === "asset_current" || r.category === "asset_noncurrent")
+      && arMatch(/مخزون|بضاعة|بضائع/, r.name)
+      && !arMatch(/متاجرة|تحويل|أول المدة/, r.name))
+    .map((r) => ({ name: r.name, code: r.code, amount: (r.debit || 0) - (r.credit || 0) })));
+  const taxSrc = srcOf(f.liabilityCurrentRows.filter((r) => /ضريبة/.test(r.name)));
+  // دائنون آخرون: باقي حسابات الخصوم المتداولة عدا الموردين (بند مستقل أعلاه) والضرائب (بند مستقل تحت) —
+  // كانت تختفي بالكامل من وعاء الزكاة رغم ظهورها في المركز المالي (مثال: أرصدة فروع/جهات مرتبطة)
+  // لازم نستبعد اللي ليهم بنود مستقلة فوق (موردين، دفعات مقدمة عملاء، ضرائب)،
+  // وإلا نفس الحساب بيتخصم مرتين من وعاء الزكاة: مرة في بنده ومرة هنا.
+  // الاستبعاد بالـ subtype مش بالاسم — الاسم مش دايمًا بيقول إنه عميل أو مورد.
+  const ownItemCodes = new Set(
+    (rows || []).filter((r) => r.subtype === "supplier_debt" || r.subtype === "customer_prepaid").map(acctKey)
+  );
+  const otherCredRows = f.liabilityCurrentRows.filter((r) =>
+    !ownItemCodes.has(acctKey(r)) && !/ضريبة/.test(r.name) && Math.abs(r.amount) > 0.004);
+  const otherCredTotal = round2(otherCredRows.reduce((s, r) => s + r.amount, 0));
+  // جاري الشركاء: دَين حقيقي على الشركة تجاه الشريك (مسحوبات/أرصدة لم تُرد بعد)، وليس رأس مال مستثمر في النشاط،
+  // فيجب خصمه من وعاء الزكاة شرعًا مثل أي التزام آخر — كان مصنّفًا حقوق ملكية فاختفى من الوعاء تمامًا
+  const partnerCurrentRows = f.equityAccountRows.filter((r) => equityBucketOf(r) === "partners" && Math.abs(r.amount) > 0.004);
+  const partnerCurrentTotal = round2(partnerCurrentRows.reduce((s, r) => s + r.amount, 0));
+  return [
+    { id: uidFn(), group: "asset", label: "النقدية والخزائن", amount: sumSrc(srcOf((f.balanceGroups.cash.rows || []))), sources: srcOf((f.balanceGroups.cash.rows || [])) },
+    { id: uidFn(), group: "asset", label: "المدينون الآخرون والأمانات", amount: sumSrc(srcOf((f.balanceGroups.debtors && f.balanceGroups.debtors.rows) || [])), sources: srcOf((f.balanceGroups.debtors && f.balanceGroups.debtors.rows) || []) },
+    { id: uidFn(), group: "asset", label: "ذمم العملاء المدينة (المرجوة)", amount: sumSrc(bySub("customer_debt")), sources: bySub("customer_debt") },
+    { id: uidFn(), group: "asset", label: "دفعات مقدمة للموردين", amount: sumSrc(bySub("supplier_prepaid")), sources: bySub("supplier_prepaid") },
+    { id: uidFn(), group: "asset", label: "المخزون التجاري (بالتكلفة الدفترية)", amount: sumSrc(invSrc), sources: invSrc },
+    { id: uidFn(), group: "liability", label: "موردون (أرصدة دائنة)", amount: sumSrc(bySub("supplier_debt", true)), sources: bySub("supplier_debt", true) },
+    { id: uidFn(), group: "liability", label: "دفعات مقدمة من العملاء", amount: sumSrc(bySub("customer_prepaid", true)), sources: bySub("customer_prepaid", true) },
+    { id: uidFn(), group: "liability", label: "ضرائب مستحقة", amount: taxLiab, sources: taxSrc },
+    { id: uidFn(), group: "liability", label: "دائنون آخرون", amount: otherCredTotal, sources: srcOf(otherCredRows) },
+    { id: uidFn(), group: "liability", label: "جاري الشركاء (حسابات جارية دائنة)", amount: partnerCurrentTotal, sources: srcOf(partnerCurrentRows) },
+        ];
 }

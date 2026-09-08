@@ -71,6 +71,10 @@ const VENDOR = [
   ["node_modules/firebase/firebase-app-compat.js", "vendor/firebase-app-compat.js"],
   ["node_modules/firebase/firebase-auth-compat.js", "vendor/firebase-auth-compat.js"],
   ["node_modules/firebase/firebase-firestore-compat.js", "vendor/firebase-firestore-compat.js"],
+  // مكتبات تصدير PDF — بتتحمّل عند أول تصدير بس (مش مع فتح التطبيق)،
+  // لكن لازم تبقى محلية زي الباقي عشان التصدير يشتغل أوفلاين كمان
+  ["node_modules/html2canvas/dist/html2canvas.min.js", "vendor/html2canvas.min.js"],
+  ["node_modules/jspdf/dist/jspdf.umd.min.js", "vendor/jspdf.umd.min.js"],
 ];
 
 mkdirSync("vendor", { recursive: true });
