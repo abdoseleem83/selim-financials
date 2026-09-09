@@ -6,7 +6,7 @@ import { computeFigures, round2 } from "../src/calc.js";
 const row = (o) => ({
   code: o.code, name: o.name, category: o.category,
   debit: o.debit || 0, credit: o.credit || 0,
-  chain: o.chain || [], subtype: null, bsGroup: o.bsGroup || null,
+  chain: o.chain || [], subtype: o.subtype || null, bsGroup: o.bsGroup || null,
 });
 
 // شركة بشريكين: رأس مال 300,000 (٢٠٠ + ١٠٠)، نقدية 400,000، موردون 100,000
@@ -48,11 +48,32 @@ test("الزكاة بتتوزّع على الشركاء بنسبة رأس الم
   assert.equal(round2(computeZakatTotal(zakatData())), 7500);
 });
 
-test("الشريك اللي حصته تحت النصاب مايتزكّاش عنها", () => {
+test("النصاب على الوعاء كله — حكم الخلطة (الافتراضي)", () => {
+  // معيار AAOIFI الشرعي 35 ومجمع الفقه الإسلامي: الشركة وحدة واحدة،
+  // النصاب يُقاس على وعائها كله ثم الزكاة تتوزّع على الشركاء بحصصهم.
   const d = zakatData({ goldPrice: 1500 });  // النصاب = 127,500
-  // أحمد 200,000 فوق النصاب → يتزكّى. محمود 100,000 تحته → لأ.
-  // الزكاة = 200,000 × 2.5% = 5,000
+  // الوعاء 300,000 فوق النصاب → الزكاة على الوعاء كله
+  assert.equal(round2(computeZakatTotal(d)), 7500);
+});
+
+test("خيار القياس على حصة كل شريك لمن يرى ذلك", () => {
+  const d = zakatData({ goldPrice: 1500, nisabMode: "partner" });
+  // أحمد 200,000 فوق النصاب يتزكّى، محمود 100,000 تحته لأ
   assert.equal(round2(computeZakatTotal(d)), 5000);
+});
+
+test("القياس على الحصة ممكن يسقط الزكاة كلها رغم إن مال الشركة فوق النصاب", () => {
+  // أربع شركاء بالتساوي، وعاء 400,000 فوق نصاب 150,000 — لكن حصة كل واحد تحته
+  const rows = [
+    row({ code: "1101", name: "الخزينة", category: "asset_current", debit: 400000 }),
+    row({ code: "3101", name: "شركاء- أ", category: "equity", credit: 100000 }),
+    row({ code: "3102", name: "شركاء- ب", category: "equity", credit: 100000 }),
+    row({ code: "3103", name: "شركاء- ج", category: "equity", credit: 100000 }),
+    row({ code: "3104", name: "شركاء- د", category: "equity", credit: 100000 }),
+  ];
+  const base = { rows, items: [{ group: "asset", label: "نقدية", amount: 400000 }], rate: 2.5, goldPrice: 1764.7058823529412 };
+  assert.equal(round2(computeZakatTotal({ ...base })), 10000, "الخلطة: الزكاة واجبة");
+  assert.equal(round2(computeZakatTotal({ ...base, nisabMode: "partner" })), 0, "على الحصة: بتسقط تمامًا");
 });
 
 test("مفيش سعر ذهب = مفيش نصاب = مفيش زكاة", () => {
@@ -269,4 +290,48 @@ test("تناسب الحول: سنة ميلادية بترفع النسبة ال�
   assert.equal(d.days, 365);
   const effective = d.rate * d.proration;
   assert.equal(effective.toFixed(3), "2.578", "المعدل الفعلي للسنة الميلادية");
+});
+
+/* ===== القواعد الفقهية المطبَّقة ===== */
+
+test("المصروفات المدفوعة مقدمًا لا تُزكّى، والدفعات للموردين تُزكّى", () => {
+  const items = buildZakatItems(computeFigures([
+    row({ code: "1101", name: "الخزينة", category: "asset_current", debit: 50000 }),
+    row({ code: "1401", name: "مدينين- ايجار مقدم المخزن", category: "asset_current", debit: 13000 }),
+    row({ code: "1402", name: "مدينين- تامين لدى الغير", category: "asset_current", debit: 18000 }),
+    row({ code: "1403", name: "موردين- دفعة مقدمة", category: "asset_current", debit: 7000, subtype: "supplier_prepaid" }),
+    row({ code: "3101", name: "رأس المال", category: "equity", credit: 88000 }),
+  ], 0), [
+    row({ code: "1101", name: "الخزينة", category: "asset_current", debit: 50000 }),
+    row({ code: "1401", name: "مدينين- ايجار مقدم المخزن", category: "asset_current", debit: 13000 }),
+    row({ code: "1402", name: "مدينين- تامين لدى الغير", category: "asset_current", debit: 18000 }),
+    row({ code: "1403", name: "موردين- دفعة مقدمة", category: "asset_current", debit: 7000, subtype: "supplier_prepaid" }),
+    row({ code: "3101", name: "رأس المال", category: "equity", credit: 88000 }),
+  ], () => "x");
+
+  const debtors = items.find((i) => i.label.includes("المدينون"));
+  const names = (debtors.sources || []).map((s) => s.name);
+  assert.ok(!names.some((n) => n.includes("ايجار مقدم")), "الإيجار المقدم منفعة تُستهلك — مش زكوي");
+  assert.ok(names.some((n) => n.includes("تامين")), "التأمين المسترد ديْن — زكوي");
+  assert.ok(debtors.note && debtors.note.includes("مقدمًا"), "لازم يوضّح إيه اللي اتستبعد وليه");
+
+  const sup = items.find((i) => i.label.includes("دفعات مقدمة للموردين"));
+  assert.equal(sup.amount, 7000, "الدفعة للمورد ديْن ببضاعة — زكوية");
+});
+
+test("مخصص الديون المشكوك فيها بيتخصم من ذمم العملاء", () => {
+  const rows = [
+    row({ code: "1201", name: "عميل أ", category: "asset_current", debit: 100000, subtype: "customer_debt" }),
+    row({ code: "1299", name: "مخصص ديون مشكوك في تحصيلها", category: "asset_current", credit: 15000 }),
+    row({ code: "3101", name: "رأس المال", category: "equity", credit: 85000 }),
+  ];
+  const items = buildZakatItems(computeFigures(rows, 0), rows, () => "x");
+  const cust = items.find((i) => i.label.includes("ذمم العملاء"));
+  assert.equal(cust.amount, 85000, "100,000 − 15,000 مخصص");
+  assert.ok(cust.note && cust.note.includes("المرجوة"));
+});
+
+test("حول أقل من سنة بيتنبّه إنه تقدير مش استحقاق واجب", () => {
+  const d = computeZakatDetail(zakatData({ hawlStart: "2026-01-01", hawlEnd: "2026-07-01" }));
+  assert.ok(d.hawlWarning && d.hawlWarning.includes("تجب بتمام الحول"), "لازم يوضّح الحكم الشرعي");
 });
