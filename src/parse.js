@@ -4,7 +4,7 @@
  * كل القوائم بعد كده، من غير أي مؤشر إن فيه حاجة حصلت.
  * الاختبارات في tests/parse.test.js و tests/zakat.test.js.
  */
-import { cleanAccName, parseAmountCell, parseSignedNum, numericFromCell, guessCategory, computeFigures } from "./calc.js";
+import { round2, equityBucketOf, arMatch, cleanAccName, parseAmountCell, parseSignedNum, numericFromCell, guessCategory, computeFigures, acctKey } from "./calc.js";
 
 // معرّفات المستندات في Firestore: Math.random بـ8 محارف مش مضمونة التفرّد،
 // وتصادم واحد معناه فترة بتكتب فوق فترة تانية. crypto.randomUUID أقوى بكتير،
@@ -469,27 +469,186 @@ export function seedClassMapFrom(parsed, savedMap, autoGuess) {
 }
 
 export function zakatPartners(f) {
-  // حصص الشركاء للزكاة من حسابات رأس المال (شركاء) فقط — نستبعد جاري الشركاء
-  const capital = f.equityAccountRows.filter((r) => r.amount > 0 && /شرك|رأس المال|راس المال/.test(r.name) && !/جاري/.test(r.name));
-  const list = capital.length ? capital : f.equityAccountRows.filter((r) => r.amount > 0 && !/جاري/.test(r.name));
-  return list.length ? list : f.equityAccountRows.filter((r) => r.amount > 0);
+  // حصص الشركاء من حسابات رأس المال فقط.
+  //
+  // لازم نستخدم equityBucketOf مش مطابقة /جاري/ على الاسم: هي اللي بتراعي
+  // التعديل اليدوي (bsGroup) وسلسلة الآباء وتوحيد الإملاء، وهي نفسها اللي
+  // بيتحسب بيها خصم «جاري الشركاء» من الوعاء. لما الاتنين كانوا بقاعدتين
+  // مختلفتين، حساب زي «مسحوبات الشريك» كان بيتخصم كالتزام ويتحسب رأس مال
+  // في نفس الوقت — يعني الشريك بيتحمّل زكاة على مال متخصوم أصلاً.
+  //
+  // الأرباح المحتجزة مستبعدة كمان: هي مش شخص، ولو دخلت هتطلع كأنها «شريك»
+  // له حصة وزكاة مستقلة في القائمة.
+  const capital = f.equityAccountRows.filter((r) => r.amount > 0 && equityBucketOf(r) === "capital");
+  if (capital.length) return capital;
+  // احتياطي: ميزان مفيهوش حسابات رأس مال واضحة — ناخد أي حقوق ملكية موجبة
+  // غير جاري الشركاء عشان القائمة ماتطلعش من غير شركاء خالص
+  const fallback = f.equityAccountRows.filter((r) => r.amount > 0 && equityBucketOf(r) !== "partners");
+  return fallback.length ? fallback : f.equityAccountRows.filter((r) => r.amount > 0);
+}
+
+/* حساب الزكاة كامل — مصدر واحد للحقيقة.
+ *
+ * الشاشة والمستند الرسمي ولوحة القيادة كلهم بينادوا الدالة دي، فمستحيل
+ * يفترقوا. قبل كده كان الحساب متكرر في مكانين وأي تعديل في واحد بس
+ * بيخلّي الرقم في لوحة القيادة مختلف عن المستند المطبوع.
+ */
+export function computeZakatDetail(zakatData) {
+  const empty = { base: 0, totalAssets: 0, totalLiab: 0, nisab: 0, days: 354, proration: 1,
+                  rate: 2.5, partners: [], totalDue: 0, hawlWarning: null };
+  if (!zakatData || !zakatData.rows || !zakatData.items) return empty;
+
+  const f = computeFigures(zakatData.rows);
+  const totalAssets = round2(zakatData.items.filter((i) => i.group === "asset").reduce((s, i) => s + (i.amount || 0), 0));
+  const totalLiab = round2(zakatData.items.filter((i) => i.group === "liability").reduce((s, i) => s + (i.amount || 0), 0));
+  const base = round2(totalAssets - totalLiab);
+
+  // مدة الحول: لو التواريخ مقلوبة أو ناقصة نرجع للحول الهجري (354 يوم) ونحذّر
+  let days = 354, hawlWarning = null;
+  if (zakatData.hawlStart && zakatData.hawlEnd) {
+    const d = Math.round((new Date(zakatData.hawlEnd) - new Date(zakatData.hawlStart)) / 86400000);
+    if (!isFinite(d) || d <= 0) hawlWarning = "تاريخ نهاية الحول لازم يكون بعد تاريخ البداية — اتحسبت على حول هجري كامل (354 يوم).";
+    else if (d > 400) { days = d; hawlWarning = `مدة الحول ${d} يوم — أطول من سنة. اتأكد من التواريخ.`; }
+    else {
+      days = d;
+      // الزكاة شرعًا بتجب بتمام الحول. الحساب على فترة أقصر تقدير للتجنيب
+      // الدوري مش استحقاق فعلي — لازم المستخدم يعرف الفرق.
+      if (d < 354) hawlWarning = `مدة الحول ${d} يوم — أقل من حول كامل (354 يوم). الزكاة شرعًا تجب بتمام الحول، والرقم ده تقدير للتجنيب الدوري مش استحقاق واجب الأداء.`;
+    }
+  }
+  // تناسب الحول الهجري (354 يوم): سنة ميلادية 365 يوم بترفع النسبة الفعلية
+  // لـ 2.577% وهي الطريقة المعتمدة محاسبيًا، مش تجميدها عند 2.5%
+  const proration = days > 0 ? days / 354 : 1;
+  const rate = zakatData.rate ?? 2.5;
+  const nisab = (zakatData.goldPrice ?? 0) > 0 ? round2(zakatData.goldPrice * 85) : 0;
+
+  const raw = zakatPartners(f);
+  const totalEquity = raw.reduce((s, p) => s + p.amount, 0);
+
+  /* قياس النصاب: على الوعاء كله (حكم الخلطة) وهو الأصل، أو على حصة كل شريك.
+   *
+   * معيار AAOIFI الشرعي رقم 35 وقرارات مجمع الفقه الإسلامي بتعامل الشركة
+   * كوحدة واحدة (حكم الخلطة في الشركات)، فالنصاب يُقاس على وعاء الشركة كله
+   * ثم الزكاة تتوزّع على الشركاء بنسبة حصصهم.
+   *
+   * قياس النصاب على حصة كل شريك منفردة بيسقط الزكاة عن شريك حصته تحت النصاب
+   * رغم إن مال الشركة تجاوزه بكتير — وده يخالف حكم الخلطة.
+   *
+   * سايبينه خيار لأن فيه من أهل العلم من يرى القياس على الحصة، فلو مفتيك
+   * رأيه كده يتظبط من إعدادات الزكاة. */
+  const perPartnerNisab = zakatData.nisabMode === "partner";
+  const baseMeetsNisab = nisab > 0 && base >= nisab;
+
+  const partners = raw.map((p) => {
+    const pct = totalEquity ? p.amount / totalEquity : 0;
+    const share = round2(base * pct);
+    const meets = perPartnerNisab ? (nisab > 0 && share >= nisab) : baseMeetsNisab;
+    // التقريب على مستوى كل شريك: ده المبلغ اللي هيتدفع فعلاً عنه، والإجمالي
+    // لازم يبقى مجموع المبالغ المعروضة. قبل كده الإجمالي كان مجموع قيم غير
+    // مقرّبة، فالمستند كان بيعرض حصصًا مجموعها يخالف الإجمالي المكتوب بقرش.
+    const due = meets ? round2(share * (rate / 100) * proration) : 0;
+    return { name: p.name, code: p.code, amount: p.amount, pct, share, meets, due };
+  });
+  const totalDue = round2(partners.reduce((s, p) => s + p.due, 0));
+  return { base, totalAssets, totalLiab, nisab, days, proration, rate, partners, totalDue,
+           hawlWarning, perPartnerNisab, baseMeetsNisab };
 }
 
 export function computeZakatTotal(zakatData) {
-  if (!zakatData || !zakatData.rows || !zakatData.items) return 0;
-  const f = computeFigures(zakatData.rows);
-  const assetItems = zakatData.items.filter((i) => i.group === "asset");
-  const liabilityItems = zakatData.items.filter((i) => i.group === "liability");
-  const zakatBase = assetItems.reduce((s, i) => s + i.amount, 0) - liabilityItems.reduce((s, i) => s + i.amount, 0);
-  const days = zakatData.hawlStart && zakatData.hawlEnd ? Math.round((new Date(zakatData.hawlEnd) - new Date(zakatData.hawlStart)) / 86400000) : 354;
-  const proration = days > 0 ? days / 354 : 1; // تعديل شرعي: تناسب الحول الهجري (354 يوم) بلا سقف — يعوّض طول السنة الميلادية برفع النسبة الفعلية بدل تجميدها عند 100%
-  const rate = zakatData.rate ?? 2.5;
-  const nisab = (zakatData.goldPrice ?? 0) > 0 ? zakatData.goldPrice * 85 : 0;
-  const partnersRaw = zakatPartners(f);
-  const totalEquity = partnersRaw.reduce((s, p) => s + p.amount, 0);
-  if (nisab <= 0) return 0;
-  return partnersRaw.reduce((s, p) => {
-    const share = zakatBase * (totalEquity ? p.amount / totalEquity : 0);
-    return s + (share >= nisab ? share * (rate / 100) * proration : 0);
-  }, 0);
+  return computeZakatDetail(zakatData).totalDue;
+}
+
+
+/* بناء بنود وعاء الزكاة من الميزان.
+ *
+ * قاعدة حاكمة: مبلغ أي بند = مجموع تفاصيله بالظبط. المستند رسمي، فلو
+ * الإجمالي جاي من مصدر والتفاصيل من مصدر تاني بيبقى بيناقض نفسه.
+ *
+ * واتجاه الإشارة واحد في القسم كله: بند الخصم بيبان موجب لو رصيده دائن.
+ */
+export function buildZakatItems(f, rows, mkId) {
+  const uidFn = mkId || uid;
+  // القاعدة الحاكمة: مبلغ أي بند = مجموع تفاصيله بالظبط
+  const sumSrc = (srcs) => round2((srcs || []).reduce((t, x) => t + (x.amount || 0), 0));
+  const taxLiab = round2(f.liabilityCurrentRows.filter((r) => /ضريبة/.test(r.name)).reduce((s, r) => s + r.amount, 0));
+  // تفاصيل كل بند من الحسابات الفعلية في الميزان
+  // مهم: لا نأخذ Math.abs هنا — لو حساب فرعي رصيده بعكس طبيعة مجموعته (مثلاً صندوق نقدية برصيد دائن)
+  // لازم يفضل بالسالب عشان يُخصم صح من إجمالي البند، مش يتجمع عليه غلط
+  // المصادر بتحمل كود الحساب كمان مش الاسم بس — عشان حسابين بنفس الاسم
+  // في فرعين مختلفين مايتلغبطوش ولا يتشالوا بالغلط عند الإضافة أو الحذف
+  /* المصروفات المدفوعة مقدمًا (إيجار/تأمين قسط/اشتراك) مش زكوية: دي منفعة
+   * هتُستهلك مش مال مملوك عائد. بخلاف:
+   *   - الدفعات المقدمة للموردين: ديْن ببضاعة → زكوية
+   *   - التأمينات المستردة لدى الغير: ديْن مسترد → زكوية
+   * الفرق إن المصروف المقدم بيجمع كلمة «مقدم» مع بند مصروف. */
+  const isPrepaidExpense = (r) =>
+    arMatch(/مقدم/, r.name) && arMatch(/إيجار|اشتراك|صيانة|دعاية|كهرباء|مياه|رواتب|مرتبات|قسط|مصروف|مصاريف/, r.name);
+
+  const srcOf = (arr) => (arr || []).map((r) => ({ code: r.code, name: r.name, amount: round2(r.amount !== undefined ? r.amount : ((r.debit || 0) - (r.credit || 0))) })).filter((s) => Math.abs(s.amount) > 0.004);
+  // اتجاه الإشارة لازم يبقى واحد في القسم كله. بنود الخصوم التانية (دائنون،
+  // ضرائب، جاري الشركاء) جاية من liabilityCurrentRows/equityAccountRows وقيمتها
+  // (دائن − مدين)، فالخصم بيبان موجب. لكن bySub كانت بتحسب (مدين − دائن)،
+  // فبند «موردون» كان إجماليه موجب وتفاصيله سالبة — تناقض على وش المستند.
+  const bySub = (st, isLiab) => srcOf((rows || []).filter((r) => r.subtype === st).map((r) => ({
+    code: r.code, name: r.name,
+    amount: isLiab ? ((r.credit || 0) - (r.debit || 0)) : ((r.debit || 0) - (r.credit || 0)),
+  })));
+  // مهم: نفس القاعدة اللي بتحسب المبلغ (f.closingInventory) لازم تحكم التفاصيل كمان.
+  // قبل كده التفاصيل كانت من balanceGroups.inventory اللي بيطابق «مخزن» كمان،
+  // فحساب زي «ايجار مقدم مخزن البرج» كان بيدخل في تفاصيل المخزون (وهو مش مخزون)
+  // ويظهر في بند «المدينون الآخرون» في نفس الوقت — تفاصيل ما بتجمعش على الإجمالي.
+  const invSrc = srcOf((rows || [])
+    .filter((r) => (r.category === "asset_current" || r.category === "asset_noncurrent")
+      && arMatch(/مخزون|بضاعة|بضائع/, r.name)
+      && !arMatch(/متاجرة|تحويل|أول المدة/, r.name))
+    .map((r) => ({ name: r.name, code: r.code, amount: (r.debit || 0) - (r.credit || 0) })));
+  const taxSrc = srcOf(f.liabilityCurrentRows.filter((r) => /ضريبة/.test(r.name)));
+  // دائنون آخرون: باقي حسابات الخصوم المتداولة عدا الموردين (بند مستقل أعلاه) والضرائب (بند مستقل تحت) —
+  // كانت تختفي بالكامل من وعاء الزكاة رغم ظهورها في المركز المالي (مثال: أرصدة فروع/جهات مرتبطة)
+  // لازم نستبعد اللي ليهم بنود مستقلة فوق (موردين، دفعات مقدمة عملاء، ضرائب)،
+  // وإلا نفس الحساب بيتخصم مرتين من وعاء الزكاة: مرة في بنده ومرة هنا.
+  // الاستبعاد بالـ subtype مش بالاسم — الاسم مش دايمًا بيقول إنه عميل أو مورد.
+  const ownItemCodes = new Set(
+    (rows || []).filter((r) => r.subtype === "supplier_debt" || r.subtype === "customer_prepaid").map(acctKey)
+  );
+  const otherCredRows = f.liabilityCurrentRows.filter((r) =>
+    !ownItemCodes.has(acctKey(r)) && !/ضريبة/.test(r.name) && Math.abs(r.amount) > 0.004);
+  const otherCredTotal = round2(otherCredRows.reduce((s, r) => s + r.amount, 0));
+  // جاري الشركاء: دَين حقيقي على الشركة تجاه الشريك (مسحوبات/أرصدة لم تُرد بعد)، وليس رأس مال مستثمر في النشاط،
+  // فيجب خصمه من وعاء الزكاة شرعًا مثل أي التزام آخر — كان مصنّفًا حقوق ملكية فاختفى من الوعاء تمامًا
+  const partnerCurrentRows = f.equityAccountRows.filter((r) => equityBucketOf(r) === "partners" && Math.abs(r.amount) > 0.004);
+  const partnerCurrentTotal = round2(partnerCurrentRows.reduce((s, r) => s + r.amount, 0));
+
+  const isDoubtfulAllowance = (r) => arMatch(/مخصص/, r.name) && arMatch(/ديون|مشكوك|معدومة/, r.name);
+  const debtorRowsAll = (f.balanceGroups.debtors && f.balanceGroups.debtors.rows) || [];
+  const prepaidRows = debtorRowsAll.filter(isPrepaidExpense);
+  const prepaidTotal = round2(prepaidRows.reduce((t, r) => t + (r.amount || 0), 0));
+  // المخصص بيتخصم من ذمم العملاء تحت — لازم يتستبعد هنا وإلا يتخصم مرتين
+  const debtorSrc = srcOf(debtorRowsAll.filter((r) => !isPrepaidExpense(r) && !isDoubtfulAllowance(r)));
+
+  /* الديون المشكوك في تحصيلها لا تُزكّى — تُزكّى الديون المرجوة فقط.
+   * لو الميزان فيه مخصص ديون مشكوك فيها بنخصمه من ذمم العملاء. */
+  const doubtfulRows = (rows || []).filter(isDoubtfulAllowance);
+  const doubtfulTotal = round2(doubtfulRows.reduce((t, r) => t + ((r.credit || 0) - (r.debit || 0)), 0));
+  return [
+    { id: uidFn(), group: "asset", label: "النقدية والخزائن", amount: sumSrc(srcOf((f.balanceGroups.cash.rows || []))), sources: srcOf((f.balanceGroups.cash.rows || [])) },
+    { id: uidFn(), group: "asset", label: "المدينون الآخرون والأمانات",
+      amount: sumSrc(debtorSrc), sources: debtorSrc,
+      note: prepaidTotal > 0.004
+        ? `استُبعدت مصروفات مدفوعة مقدمًا بقيمة ${prepaidTotal.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} — منفعة تُستهلك ولا تُزكّى`
+        : null },
+    { id: uidFn(), group: "asset", label: "ذمم العملاء المدينة (المرجوة)",
+      amount: round2(sumSrc(bySub("customer_debt")) - doubtfulTotal),
+      sources: doubtfulTotal > 0.004
+        ? bySub("customer_debt").concat([{ code: null, name: "(−) مخصص ديون مشكوك في تحصيلها", amount: -doubtfulTotal }])
+        : bySub("customer_debt"),
+      note: doubtfulTotal > 0.004 ? "الديون المشكوك في تحصيلها لا تُزكّى — تُزكّى المرجوة فقط" : null },
+    { id: uidFn(), group: "asset", label: "دفعات مقدمة للموردين", amount: sumSrc(bySub("supplier_prepaid")), sources: bySub("supplier_prepaid") },
+    { id: uidFn(), group: "asset", label: "المخزون التجاري (بالتكلفة الدفترية)", amount: sumSrc(invSrc), sources: invSrc },
+    { id: uidFn(), group: "liability", label: "موردون (أرصدة دائنة)", amount: sumSrc(bySub("supplier_debt", true)), sources: bySub("supplier_debt", true) },
+    { id: uidFn(), group: "liability", label: "دفعات مقدمة من العملاء", amount: sumSrc(bySub("customer_prepaid", true)), sources: bySub("customer_prepaid", true) },
+    { id: uidFn(), group: "liability", label: "ضرائب مستحقة", amount: taxLiab, sources: taxSrc },
+    { id: uidFn(), group: "liability", label: "دائنون آخرون", amount: otherCredTotal, sources: srcOf(otherCredRows) },
+    { id: uidFn(), group: "liability", label: "جاري الشركاء (حسابات جارية دائنة)", amount: partnerCurrentTotal, sources: srcOf(partnerCurrentRows) },
+        ];
 }
