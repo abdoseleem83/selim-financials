@@ -469,30 +469,74 @@ export function seedClassMapFrom(parsed, savedMap, autoGuess) {
 }
 
 export function zakatPartners(f) {
-  // حصص الشركاء للزكاة من حسابات رأس المال (شركاء) فقط — نستبعد جاري الشركاء
-  const capital = f.equityAccountRows.filter((r) => r.amount > 0 && /شرك|رأس المال|راس المال/.test(r.name) && !/جاري/.test(r.name));
-  const list = capital.length ? capital : f.equityAccountRows.filter((r) => r.amount > 0 && !/جاري/.test(r.name));
-  return list.length ? list : f.equityAccountRows.filter((r) => r.amount > 0);
+  // حصص الشركاء من حسابات رأس المال فقط.
+  //
+  // لازم نستخدم equityBucketOf مش مطابقة /جاري/ على الاسم: هي اللي بتراعي
+  // التعديل اليدوي (bsGroup) وسلسلة الآباء وتوحيد الإملاء، وهي نفسها اللي
+  // بيتحسب بيها خصم «جاري الشركاء» من الوعاء. لما الاتنين كانوا بقاعدتين
+  // مختلفتين، حساب زي «مسحوبات الشريك» كان بيتخصم كالتزام ويتحسب رأس مال
+  // في نفس الوقت — يعني الشريك بيتحمّل زكاة على مال متخصوم أصلاً.
+  //
+  // الأرباح المحتجزة مستبعدة كمان: هي مش شخص، ولو دخلت هتطلع كأنها «شريك»
+  // له حصة وزكاة مستقلة في القائمة.
+  const capital = f.equityAccountRows.filter((r) => r.amount > 0 && equityBucketOf(r) === "capital");
+  if (capital.length) return capital;
+  // احتياطي: ميزان مفيهوش حسابات رأس مال واضحة — ناخد أي حقوق ملكية موجبة
+  // غير جاري الشركاء عشان القائمة ماتطلعش من غير شركاء خالص
+  const fallback = f.equityAccountRows.filter((r) => r.amount > 0 && equityBucketOf(r) !== "partners");
+  return fallback.length ? fallback : f.equityAccountRows.filter((r) => r.amount > 0);
+}
+
+/* حساب الزكاة كامل — مصدر واحد للحقيقة.
+ *
+ * الشاشة والمستند الرسمي ولوحة القيادة كلهم بينادوا الدالة دي، فمستحيل
+ * يفترقوا. قبل كده كان الحساب متكرر في مكانين وأي تعديل في واحد بس
+ * بيخلّي الرقم في لوحة القيادة مختلف عن المستند المطبوع.
+ */
+export function computeZakatDetail(zakatData) {
+  const empty = { base: 0, totalAssets: 0, totalLiab: 0, nisab: 0, days: 354, proration: 1,
+                  rate: 2.5, partners: [], totalDue: 0, hawlWarning: null };
+  if (!zakatData || !zakatData.rows || !zakatData.items) return empty;
+
+  const f = computeFigures(zakatData.rows);
+  const totalAssets = round2(zakatData.items.filter((i) => i.group === "asset").reduce((s, i) => s + (i.amount || 0), 0));
+  const totalLiab = round2(zakatData.items.filter((i) => i.group === "liability").reduce((s, i) => s + (i.amount || 0), 0));
+  const base = round2(totalAssets - totalLiab);
+
+  // مدة الحول: لو التواريخ مقلوبة أو ناقصة نرجع للحول الهجري (354 يوم) ونحذّر
+  let days = 354, hawlWarning = null;
+  if (zakatData.hawlStart && zakatData.hawlEnd) {
+    const d = Math.round((new Date(zakatData.hawlEnd) - new Date(zakatData.hawlStart)) / 86400000);
+    if (!isFinite(d) || d <= 0) hawlWarning = "تاريخ نهاية الحول لازم يكون بعد تاريخ البداية — اتحسبت على حول هجري كامل (354 يوم).";
+    else if (d > 400) { days = d; hawlWarning = `مدة الحول ${d} يوم — أطول من سنة. اتأكد من التواريخ.`; }
+    else days = d;
+  }
+  // تناسب الحول الهجري (354 يوم): سنة ميلادية 365 يوم بترفع النسبة الفعلية
+  // لـ 2.577% وهي الطريقة المعتمدة محاسبيًا، مش تجميدها عند 2.5%
+  const proration = days > 0 ? days / 354 : 1;
+  const rate = zakatData.rate ?? 2.5;
+  const nisab = (zakatData.goldPrice ?? 0) > 0 ? round2(zakatData.goldPrice * 85) : 0;
+
+  const raw = zakatPartners(f);
+  const totalEquity = raw.reduce((s, p) => s + p.amount, 0);
+  const partners = raw.map((p) => {
+    const pct = totalEquity ? p.amount / totalEquity : 0;
+    const share = round2(base * pct);
+    const meets = nisab > 0 && share >= nisab;
+    // التقريب على مستوى كل شريك: ده المبلغ اللي هيتدفع فعلاً عنه، والإجمالي
+    // لازم يبقى مجموع المبالغ المعروضة. قبل كده الإجمالي كان مجموع قيم غير
+    // مقرّبة، فالمستند كان بيعرض حصصًا مجموعها يخالف الإجمالي المكتوب بقرش.
+    const due = meets ? round2(share * (rate / 100) * proration) : 0;
+    return { name: p.name, code: p.code, amount: p.amount, pct, share, meets, due };
+  });
+  const totalDue = round2(partners.reduce((s, p) => s + p.due, 0));
+  return { base, totalAssets, totalLiab, nisab, days, proration, rate, partners, totalDue, hawlWarning };
 }
 
 export function computeZakatTotal(zakatData) {
-  if (!zakatData || !zakatData.rows || !zakatData.items) return 0;
-  const f = computeFigures(zakatData.rows);
-  const assetItems = zakatData.items.filter((i) => i.group === "asset");
-  const liabilityItems = zakatData.items.filter((i) => i.group === "liability");
-  const zakatBase = assetItems.reduce((s, i) => s + i.amount, 0) - liabilityItems.reduce((s, i) => s + i.amount, 0);
-  const days = zakatData.hawlStart && zakatData.hawlEnd ? Math.round((new Date(zakatData.hawlEnd) - new Date(zakatData.hawlStart)) / 86400000) : 354;
-  const proration = days > 0 ? days / 354 : 1; // تعديل شرعي: تناسب الحول الهجري (354 يوم) بلا سقف — يعوّض طول السنة الميلادية برفع النسبة الفعلية بدل تجميدها عند 100%
-  const rate = zakatData.rate ?? 2.5;
-  const nisab = (zakatData.goldPrice ?? 0) > 0 ? zakatData.goldPrice * 85 : 0;
-  const partnersRaw = zakatPartners(f);
-  const totalEquity = partnersRaw.reduce((s, p) => s + p.amount, 0);
-  if (nisab <= 0) return 0;
-  return partnersRaw.reduce((s, p) => {
-    const share = zakatBase * (totalEquity ? p.amount / totalEquity : 0);
-    return s + (share >= nisab ? share * (rate / 100) * proration : 0);
-  }, 0);
+  return computeZakatDetail(zakatData).totalDue;
 }
+
 
 /* بناء بنود وعاء الزكاة من الميزان.
  *

@@ -202,3 +202,71 @@ test("الأصول الثابتة مش داخلة في وعاء الزكاة", (
   const assets = items.filter((i) => i.group === "asset").reduce((s, i) => s + i.amount, 0);
   assert.equal(assets, 50000);
 });
+
+/* ===== الحساب الموحّد: الشاشة والمستند ولوحة القيادة ===== */
+import { computeZakatDetail } from "../src/parse.js";
+
+test("مجموع زكاة الشركاء = الإجمالي المعروض بالظبط", () => {
+  // كان الإجمالي مجموع قيم غير مقرّبة والحصص معروضة مقرّبة، فالمستند الرسمي
+  // كان بيعرض حصصًا مجموعها يخالف الإجمالي المكتوب بقرش.
+  const d = computeZakatDetail(zakatData({ hawlStart: "2026-01-01", hawlEnd: "2026-12-31" }));
+  const sumShown = round2(d.partners.reduce((s, p) => s + p.due, 0));
+  assert.equal(sumShown, d.totalDue, "مجموع الحصص لازم يساوي الإجمالي");
+  for (const p of d.partners) assert.equal(p.due, round2(p.due), "كل حصة مقرّبة لقرشين");
+});
+
+test("computeZakatTotal بيستخدم نفس الحساب — مستحيل يفترقوا", () => {
+  const d = zakatData();
+  assert.equal(computeZakatTotal(d), computeZakatDetail(d).totalDue);
+});
+
+test("الوعاء = الأصول − الخصوم من البنود", () => {
+  const d = computeZakatDetail(zakatData());
+  assert.equal(d.totalAssets, 400000);
+  assert.equal(d.totalLiab, 100000);
+  assert.equal(d.base, 300000);
+});
+
+test("جاري الشركاء مايتحسبش رأس مال — كان بيتخصم ويتحسب في نفس الوقت", () => {
+  const rows = tb();
+  // حساب مسحوبات: equityBucketOf بتشوفه «جاري شركاء» رغم إن اسمه مفيهوش «جاري»
+  rows.push(row({ code: "3301", name: "مسحوبات الشريك أحمد", category: "equity", credit: 40000 }));
+  const f = computeFigures(rows, 0);
+  const names = zakatPartners(f).map((p) => p.name);
+  assert.ok(!names.some((n) => n.includes("مسحوبات")), "المسحوبات مش رأس مال");
+  assert.equal(names.length, 2, "الشريكين بس");
+});
+
+test("التعديل اليدوي (bsGroup) بيتحترم في تحديد الشركاء", () => {
+  const rows = tb();
+  rows.push(row({ code: "3401", name: "حساب غامض", category: "equity", credit: 60000, bsGroup: "equity_partners" }));
+  const names = zakatPartners(computeFigures(rows, 0)).map((p) => p.name);
+  assert.ok(!names.includes("حساب غامض"), "المستخدم علّمه جاري شركاء فيتستبعد");
+});
+
+test("الأرباح المحتجزة مش شريك", () => {
+  const rows = tb();
+  rows.push(row({ code: "3501", name: "أرباح محتجزة", category: "equity", credit: 90000 }));
+  const names = zakatPartners(computeFigures(rows, 0)).map((p) => p.name);
+  assert.ok(!names.includes("أرباح محتجزة"), "مش شخص عشان يتحسبله حصة وزكاة");
+});
+
+test("تواريخ حول مقلوبة بتحذّر وترجع للحول الهجري", () => {
+  const d = computeZakatDetail(zakatData({ hawlStart: "2026-12-31", hawlEnd: "2026-01-01" }));
+  assert.ok(d.hawlWarning, "لازم يحذّر");
+  assert.equal(d.days, 354, "يرجع للحول الهجري");
+  assert.equal(d.proration, 1);
+});
+
+test("مدة حول أطول من سنة بتحذّر بس بتتحسب", () => {
+  const d = computeZakatDetail(zakatData({ hawlStart: "2024-01-01", hawlEnd: "2026-01-01" }));
+  assert.ok(d.hawlWarning && d.hawlWarning.includes("أطول"), "لازم ينبّه");
+  assert.ok(d.days > 400);
+});
+
+test("تناسب الحول: سنة ميلادية بترفع النسبة الفعلية لـ2.577%", () => {
+  const d = computeZakatDetail(zakatData({ hawlStart: "2025-01-01", hawlEnd: "2026-01-01" }));
+  assert.equal(d.days, 365);
+  const effective = d.rate * d.proration;
+  assert.equal(effective.toFixed(3), "2.578", "المعدل الفعلي للسنة الميلادية");
+});
