@@ -652,3 +652,38 @@ export function buildZakatItems(f, rows, mkId) {
     { id: uidFn(), group: "liability", label: "جاري الشركاء (حسابات جارية دائنة)", amount: partnerCurrentTotal, sources: srcOf(partnerCurrentRows) },
         ];
 }
+
+/* اقتراح حسابات لبند زكاة.
+ *
+ * الترتيب مقصود: التصنيف بيحكم الأول، بعدين الكود، وأخيرًا الاسم.
+ * الاعتماد على الاسم لوحده كان بيقترح «مصاريف- عمولات بنكيه» لبند النقدية
+ * لمجرد إن اسمه فيه «بنك» — والحساب مصروف مش نقدية.
+ */
+export function zakatParentCode(code) {
+  const c = String(code || "");
+  if (!c) return "";
+  if (c.includes("/")) { const p = c.split("/"); p.pop(); return p.join("/"); }
+  return c.length > 2 ? c.slice(0, -2) : "";
+}
+
+const ZAKAT_ASSET_CATS = ["asset_current", "asset_noncurrent"];
+const ZAKAT_LIAB_CATS = ["liability_current", "liability_noncurrent", "equity"];
+
+export function suggestZakatAccounts(item, accounts, nameRule) {
+  if (!item) return [];
+  const used = (item.sources && item.sources.length) ? item.sources : [];
+  const usedKeys = new Set(used.map(acctKey));
+
+  // ١) التصنيف: بند أصول ما ينفعش يتقترحله مصروف ولا إيراد
+  const allowed = item.group === "asset" ? ZAKAT_ASSET_CATS : ZAKAT_LIAB_CATS;
+  const pool = (accounts || []).filter((a) => allowed.includes(a.category) && !usedKeys.has(acctKey(a)));
+
+  // ٢) الكود: إخوة الحسابات المضافة في دليل الحسابات — دليل هيكلي أقوى من الاسم
+  const usedParents = new Set(used.map((x) => zakatParentCode(x.code)).filter(Boolean));
+  const siblings = usedParents.size ? pool.filter((a) => usedParents.has(zakatParentCode(a.code))) : [];
+
+  // ٣) الاسم: آخر حاجة، وللحسابات اللي مش تحت نفس الأب
+  const sibKeys = new Set(siblings.map(acctKey));
+  const byName = nameRule ? pool.filter((a) => nameRule.test(a.name) && !sibKeys.has(acctKey(a))) : [];
+  return [...siblings, ...byName];
+}

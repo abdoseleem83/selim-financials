@@ -335,3 +335,56 @@ test("حول أقل من سنة بيتنبّه إنه تقدير مش استحق
   const d = computeZakatDetail(zakatData({ hawlStart: "2026-01-01", hawlEnd: "2026-07-01" }));
   assert.ok(d.hawlWarning && d.hawlWarning.includes("تجب بتمام الحول"), "لازم يوضّح الحكم الشرعي");
 });
+
+/* ===== اقتراح الحسابات: الكود والتصنيف قبل الاسم ===== */
+import { suggestZakatAccounts, zakatParentCode } from "../src/parse.js";
+
+const CASH_RX = /نقد|بنك|صندوق|صناديق|خزين|خزائن|خزنة|خزينه|عهد|كاش|محفظ/;
+
+test("مصروف اسمه فيه «بنك» مايتقترحش لبند النقدية", () => {
+  // اتكشف من شاشة حقيقية: «مصاريف- عمولات بنكيه» كان بيتقترح لبند النقدية
+  // لمجرد إن اسمه فيه «بنك» — وهو مصروف مش نقدية.
+  const accounts = [
+    { code: "01/1/1/3", name: "صناديق- صندوق وي كاش", category: "asset_current", amount: 8049 },
+    { code: "11/3/7", name: "مصاريف- عمولات بنكيه", category: "opex", amount: 2467 },
+    { code: "01/1/2/1", name: "بنوك- البنك الأهلي", category: "asset_current", amount: 500000 },
+  ];
+  const out = suggestZakatAccounts({ group: "asset", sources: [] }, accounts, CASH_RX);
+  const names = out.map((a) => a.name);
+  assert.ok(!names.some((n) => n.includes("عمولات بنكيه")), "المصروف مايتقترحش لبند أصول");
+  assert.ok(names.some((n) => n.includes("وي كاش")));
+  assert.ok(names.some((n) => n.includes("البنك الأهلي")));
+});
+
+test("إخوة الحساب في دليل الحسابات بيتقترحوا الأول — الكود أقوى من الاسم", () => {
+  const accounts = [
+    { code: "01/1/1/4", name: "صندوق فرعي", category: "asset_current", amount: 1000 },
+    { code: "01/1/9/1", name: "خزينة بعيدة", category: "asset_current", amount: 2000 },
+  ];
+  // البند فيه حساب تحت 01/1/1 — فأخوه المفروض يتقدّم
+  const item = { group: "asset", sources: [{ code: "01/1/1/3", name: "صندوق النقدي", amount: 5000 }] };
+  const out = suggestZakatAccounts(item, accounts, CASH_RX);
+  assert.equal(out[0].code, "01/1/1/4", "الأخ في نفس الأب أولاً");
+});
+
+test("بند خصوم مايتقترحلوش أصول", () => {
+  const accounts = [
+    { code: "01/1/1/3", name: "صندوق النقدي", category: "asset_current", amount: 5000 },
+    { code: "21/1/1", name: "موردين- أحمد", category: "liability_current", amount: -3000 },
+  ];
+  const out = suggestZakatAccounts({ group: "liability", sources: [] }, accounts, /مورد|موردين|صندوق/);
+  assert.deepEqual(out.map((a) => a.name), ["موردين- أحمد"]);
+});
+
+test("الحسابات المضافة خلاص مايتكررش اقتراحها", () => {
+  const accounts = [{ code: "01/1/1/3", name: "صندوق النقدي", category: "asset_current", amount: 5000 }];
+  const item = { group: "asset", sources: [{ code: "01/1/1/3", name: "صندوق النقدي", amount: 5000 }] };
+  assert.equal(suggestZakatAccounts(item, accounts, CASH_RX).length, 0);
+});
+
+test("zakatParentCode بيشتغل مع الترقيم بالشرطة وبالتلاصق", () => {
+  assert.equal(zakatParentCode("01/1/1/3"), "01/1/1");
+  assert.equal(zakatParentCode("11010001"), "110100");
+  assert.equal(zakatParentCode("01"), "");
+  assert.equal(zakatParentCode(""), "");
+});
