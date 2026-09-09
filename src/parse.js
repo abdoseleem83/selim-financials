@@ -252,7 +252,9 @@ export function leavesToRows(parsed, classMap, savedMap) {
     // تجاوز محفوظ من تعديل المستخدم السابق
     let bsGroup = null;
     if (savedMap) {
-      const og = savedMap[`bsgroup:${leaf.name}`];
+      // الكود أولاً ثم الاسم: التجاوز المحفوظ لازم يتطبّق على الحساب ده بالذات،
+      // مش على أي حساب بنفس الاسم في فرع تاني
+      const og = (leaf.code && savedMap[`bsgroup:code:${leaf.code}`]) || savedMap[`bsgroup:${leaf.name}`];
       if (og) {
         bsGroup = og === "ignore" ? null : og;
         const gc = { cash: "asset_current", debtors: "asset_current", inventory: "asset_current", noncurrent: "asset_noncurrent", creditors: "liability_current", equity: "equity", ignore: "ignore" }[og];

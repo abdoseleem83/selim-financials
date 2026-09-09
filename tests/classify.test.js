@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { normAr, arMatch, guessCategory, equityBucketOf, computeFigures } from "../src/calc.js";
+import { normAr, arMatch, guessCategory, equityBucketOf, computeFigures, acctKey } from "../src/calc.js";
+import { leavesToRows } from "../src/parse.js";
 
 test("normAr: توحيد الهمزات والتاء المربوطة والتشكيل", () => {
   assert.equal(normAr("إهلاك"), normAr("اهلاك"));
@@ -114,4 +115,29 @@ test("حساب اسمه «إهلاك» مصروف، و«مجمع إهلاك» أ
   // والأصول نفسها زي ما هي
   assert.equal(guessCategory("أصول- اثاث ومكتب"), "asset_noncurrent");
   assert.equal(guessCategory("سيارات"), "asset_noncurrent");
+});
+
+test("acctKey: الكود هو المفتاح والاسم احتياطي", () => {
+  assert.equal(acctKey({ code: "01/1/1", name: "الخزينة" }), "c:01/1/1");
+  assert.equal(acctKey({ name: "الخزينة" }), "n:الخزينة");
+  // حسابين بنفس الاسم وأكواد مختلفة = مفتاحين مختلفين
+  assert.notEqual(acctKey({ code: "01/1/1", name: "الخزينة" }), acctKey({ code: "01/1/2", name: "الخزينة" }));
+  // نفس الحساب بمسافات زايدة = نفس المفتاح
+  assert.equal(acctKey({ code: " 01/1/1 ", name: "x" }), acctKey({ code: "01/1/1", name: "y" }));
+});
+
+test("التجاوز المحفوظ بالكود بيتطبّق على الحساب ده بس", () => {
+  const leaves = {
+    parents: [],
+    leaves: [
+      { code: "01/1/1", name: "الخزينة", chain: [], closingValue: 1000, nature: "debit", netDebit: 0, netCredit: 0 },
+      { code: "01/2/1", name: "الخزينة", chain: [], closingValue: 2000, nature: "debit", netDebit: 0, netCredit: 0 },
+    ],
+  };
+  const saved = { "bsgroup:code:01/1/1": "banks" };
+  const out = leavesToRows(leaves, {}, saved);
+  const a = out.find((r) => r.code === "01/1/1");
+  const b = out.find((r) => r.code === "01/2/1");
+  assert.equal(a.bsGroup, "banks", "المحدد بالكود اتنقل");
+  assert.equal(b.bsGroup, null, "التاني بنفس الاسم مااتأثرش");
 });
