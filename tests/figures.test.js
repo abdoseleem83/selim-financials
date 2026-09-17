@@ -198,3 +198,44 @@ test("تحذير خلط طرق حساب تكلفة البضاعة", () => {
   // شهر واحد بس = مفيش خلط أصلاً
   assert.equal(mergeFigures([directMonth]).mixedCogsMethods, false);
 });
+
+/* ميزان من برنامج محاسبي مابيقفلش حسابات الدخل آخر كل فترة: حسابات الإيراد
+   والمصروف بتفضل شايلة أرصدة متراكمة، فالأرصدة الافتتاحية للمركز المالي
+   لوحدها بتطلع غير متزنة بمقدار الربح المتراكم. openingRetained لازم
+   يلتقط الفرق ده بالظبط عشان الميزانية تقفل. */
+test("openingRetained = الربح المتراكم من الأرصدة الافتتاحية", () => {
+  // افتتاحي: أصول 130,000 · خصوم 20,000 · رأس مال 100,000
+  // يعني ربح متراكم قبل الفترة = 130,000 − 20,000 − 100,000 = 10,000
+  const tb = [
+    row({ code: "1010", name: "النقدية بالخزينة", category: "asset_current", debit: 55000, opening: 50000, nd: 5000, nc: 0 }),
+    row({ code: "1030", name: "مخزون البضاعة", category: "asset_current", debit: 80000, opening: 80000 }),
+    row({ code: "2010", name: "موردون", category: "liability_current", credit: 20000, opening: -20000 }),
+    row({ code: "3010", name: "رأس المال", category: "equity", credit: 100000, opening: -100000 }),
+    row({ code: "4010", name: "المبيعات", category: "revenue", credit: 65000, opening: -60000, nd: 0, nc: 5000 }),
+  ];
+  const f = computeFigures(tb, 0);
+  assert.equal(f.hasOpening, true);
+  assert.equal(f.openingRetained, 10000, "الفرق في الافتتاحي = الربح المتراكم");
+
+  // الميزانية بتقفل لما نضيف الربح المتراكم لحقوق الملكية
+  const equityWithPrior = f.equityAccounts + f.openingRetained + f.netProfit;
+  assert.equal(f.totalAssets - (f.totalLiab + equityWithPrior), 0, "الأصول = الخصوم + حقوق الملكية");
+});
+
+test("ميزان مقفول صح: openingRetained = صفر ومفيش تأثير", () => {
+  const tb = [
+    row({ code: "1010", name: "النقدية بالخزينة", category: "asset_current", debit: 55000, opening: 50000, nd: 5000, nc: 0 }),
+    row({ code: "2010", name: "موردون", category: "liability_current", credit: 20000, opening: -20000 }),
+    row({ code: "3010", name: "رأس المال", category: "equity", credit: 30000, opening: -30000 }),
+    row({ code: "4010", name: "المبيعات", category: "revenue", credit: 5000, nd: 0, nc: 5000 }),
+  ];
+  const f = computeFigures(tb, 0);
+  assert.equal(f.openingRetained, 0);
+  assert.equal(f.totalAssets - (f.totalLiab + f.totalEquity), 0);
+});
+
+test("ميزان من غير عمود رصيد بداية: hasOpening = false", () => {
+  const f = computeFigures(baseTB().map((r) => ({ ...r, opening: undefined })), 0);
+  assert.equal(f.hasOpening, false);
+  assert.equal(f.openingRetained, 0);
+});
