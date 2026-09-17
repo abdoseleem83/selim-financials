@@ -65,16 +65,24 @@ export function detectFlatColumns(rows) {
 export function detectTreeColumns(rows) {
   for (let r = 0; r < Math.min(rows.length, 40); r++) {
     const row = rows[r].map((c) => String(c ?? ""));
-    let code = -1, name = -1, ending = -1, opening = -1, netDebit = -1, netCredit = -1;
+    let code = -1, name = -1, ending = -1, opening = -1, netDebit = -1, netCredit = -1, netSigned = -1;
     row.forEach((cell, i) => {
       if (name === -1 && /اسم الحساب/.test(cell)) name = i;
       if (code === -1 && /رقم الحساب/.test(cell)) code = i;
       if (ending === -1 && /رصيد نهاية/.test(cell)) ending = i;
       if (opening === -1 && /رصيد بداية/.test(cell)) opening = i;
-      if (netDebit === -1 && /صافي الحركة/.test(cell) && /مدين/.test(cell)) netDebit = i;
-      if (netCredit === -1 && /صافي الحركة/.test(cell) && /دائن/.test(cell)) netCredit = i;
+      if (!/صافي الحركة|^\s*الحركة\s*$/.test(cell)) return;
+      // نفس البرنامج المحاسبي بيصدّر الحركة بصيغتين: عمودين منفصلين
+      // (صافي الحركة - مدين / صافي الحركة - دائن)، أو عمود واحد بإشارة
+      // (موجب = مدين، سالب = دائن). لازم ندعم الاتنين — لو مدعمناش العمود
+      // الواحد، التطبيق بيفضل من غير أي حركة وبيرجع لأرصدة النهاية
+      // التراكمية، فقائمة الدخل بتطلع مبيعات ومصروفات السنة كلها
+      // بدل الشهر، من غير أي رسالة خطأ.
+      if (/مدين/.test(cell)) { if (netDebit === -1) netDebit = i; }
+      else if (/دائن/.test(cell)) { if (netCredit === -1) netCredit = i; }
+      else if (netSigned === -1) netSigned = i;
     });
-    if (name !== -1 && ending !== -1) return { headerRow: r, code, name, ending, opening, netDebit, netCredit };
+    if (name !== -1 && ending !== -1) return { headerRow: r, code, name, ending, opening, netDebit, netCredit, netSigned };
   }
   return null;
 }
@@ -95,6 +103,11 @@ export function buildTreeRows(rawRows, h) {
     let netDebit = 0, netCredit = 0;
     if (h.netDebit >= 0) netDebit = parseSignedNum(row[h.netDebit]);
     if (h.netCredit >= 0) netCredit = parseSignedNum(row[h.netCredit]);
+    // عمود حركة واحد بإشارة: موجب = حركة مدينة، سالب = حركة دائنة
+    if (h.netSigned >= 0 && h.netDebit < 0 && h.netCredit < 0) {
+      const v = parseSignedNum(row[h.netSigned]);
+      if (v > 0) netDebit = v; else if (v < 0) netCredit = -v;
+    }
     all.push({
       code, name,
       closingValue: closing.value, closingNature: closing.nature,
