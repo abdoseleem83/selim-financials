@@ -263,3 +263,46 @@ test("uid: معرّف فريد وطويل بما يكفي", () => {
   const many = new Set(Array.from({ length: 5000 }, () => uid()));
   assert.equal(many.size, 5000, "مفيش تكرار في 5000 معرّف");
 });
+
+/* نفس البرنامج المحاسبي بيصدّر الحركة بصيغتين: عمودين منفصلين، أو عمود
+   واحد بإشارة. لو مدعمناش العمود الواحد، التطبيق بيعدّي من غير أي حركة
+   وبيرجع لأرصدة النهاية التراكمية — فالمبيعات والمصروفات بتطلع بتاعة
+   السنة كلها بدل الشهر، من غير أي رسالة خطأ. */
+test("عمود صافي حركة واحد بإشارة: موجب مدين وسالب دائن", () => {
+  const raw = [
+    ["رقم الحساب", "اسم الحساب", "رصيد بداية", "صافي الحركة", "رصيد نهاية"],
+    ["22", "[ ايرادات متاجرة ]", -3000, -500, -3500],
+    ["22/1", "المبيعات", -3000, -500, -3500],
+    ["22/1/1", "المبيعات - المخزن الرئيسي", -3000, -500, -3500],
+    ["11", "[ مصروفات ]", 400, 120, 520],
+    ["11/1", "مصاريف- مرتبات", 400, 120, 520],
+  ];
+  const h = detectTreeColumns(raw);
+  assert.equal(h.netSigned, 3, "لازم يلاقي عمود الحركة المفرد");
+  assert.equal(h.ending, 4);
+  assert.equal(h.netDebit, -1);
+  assert.equal(h.netCredit, -1);
+
+  const parsed = buildTreeRows(raw, h);
+  const sales = parsed.leaves.find((l) => l.code === "22/1/1");
+  assert.equal(sales.netCredit, 500, "السالب = حركة دائنة");
+  assert.equal(sales.netDebit, 0);
+  const exp = parsed.leaves.find((l) => l.code === "11/1");
+  assert.equal(exp.netDebit, 120, "الموجب = حركة مدينة");
+  assert.equal(exp.netCredit, 0);
+});
+
+test("العمودين المنفصلين لسه شغالين زي ما هما", () => {
+  const raw = [
+    ["رقم الحساب", "اسم الحساب", "رصيد بداية", "رصيد نهاية", "صافي الحركة -  مدين", "صافي الحركة -  دائن"],
+    ["22", "[ ايرادات متاجرة ]", -3000, -3500, 0, 500],
+    ["22/1", "المبيعات", -3000, -3500, 0, 500],
+    ["22/1/1", "المبيعات - المخزن الرئيسي", -3000, -3500, 0, 500],
+  ];
+  const h = detectTreeColumns(raw);
+  assert.equal(h.netDebit, 4);
+  assert.equal(h.netCredit, 5);
+  assert.equal(h.netSigned, -1, "مفيش عمود مفرد هنا");
+  const sales = buildTreeRows(raw, h).leaves.find((l) => l.code === "22/1/1");
+  assert.equal(sales.netCredit, 500);
+});
