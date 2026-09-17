@@ -330,6 +330,19 @@ export function computeFigures(rows, openingInventory, forcedCogsMethod) {
   const supplierPrepaid = Math.abs(sumRows(bySubtype("supplier_prepaid")));
   const openingInventoryFromTB = openingInvFromAccounts;
 
+  // ===== الأرباح المتراكمة قبل الفترة، مقروءة من الميزان نفسه =====
+  // كتير من برامج الحسابات مبتقفلش حسابات الإيراد والمصروف آخر كل فترة، فبتفضل
+  // شايلة أرصدة متراكمة من فترات سابقة. النتيجة إن الأرصدة الافتتاحية للمركز
+  // المالي لوحدها مش متزنة، والفرق بالظبط = الأرباح المتراكمة اللي لسه متسجّلتش
+  // في حساب أرباح مرحلة. (الأصول − الخصوم − حقوق الملكية) على الأرصدة الافتتاحية
+  // = الربح المتراكم لحد بداية الفترة، بحكم معادلة الميزانية نفسها.
+  // لو الميزان مقفول صح، الرقم ده بيطلع صفر ومبيأثرش على حاجة.
+  const BALANCE_SHEET_CATS = new Set(["asset_current", "asset_noncurrent", "liability_current", "liability_noncurrent", "equity"]);
+  const bsRows = rows.filter((r) => BALANCE_SHEET_CATS.has(r.category));
+  // الرصيد الافتتاحي مخزّن بإشارة: موجب = مدين، سالب = دائن
+  const hasOpening = bsRows.some((r) => (r.opening || 0) !== 0);
+  const openingRetained = round2(bsRows.reduce((s, r) => s + (r.opening || 0), 0));
+
   // ===== المركز المالي المجمّع (بشكل الإكسيل) — القديم: خزائن+بنوك مجمّعين، ومدينون فيها كل حاجة غير مصنّفة =====
   const cashGroup = cashRows.map((r) => ({ code: r.code, name: r.name, amount: r.amount })).filter((r) => Math.abs(r.amount) > 0.004);
   const otherDebtorRows = assetCurrentRows.filter((r) => {
@@ -441,6 +454,7 @@ export function computeFigures(rows, openingInventory, forcedCogsMethod) {
     currentLiab, nonCurrentLiab, totalLiab,
     equityAccounts, totalEquity, totalLiabEquity,
     inventory: closingInventory, openingInventoryFromTB, balanceDiff: totalAssets - totalLiabEquity,
+    openingRetained, hasOpening,
     cash, customerDebt, supplierPrepaid, customerPrepaid, supplierDebt,
     balanceGroups,
   };
