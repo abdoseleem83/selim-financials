@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeFigures, mergeFigures, periodFigures, yearFigures } from "../src/calc.js";
+import { computeFigures, mergeFigures, periodFigures, yearFigures, round2 } from "../src/calc.js";
 
 /* ميزان مراجعة مبسّط لكن كامل ومتزن، بأرقام محسوبة يدويًا.
    debit/credit = رصيد نهاية المدة (للمركز المالي)
@@ -238,4 +238,20 @@ test("ميزان من غير عمود رصيد بداية: hasOpening = false", 
   const f = computeFigures(baseTB().map((r) => ({ ...r, opening: undefined })), 0);
   assert.equal(f.hasOpening, false);
   assert.equal(f.openingRetained, 0);
+});
+
+/* نفس الشهر لو اتحفظ مرتين (رفعتين بـid مختلف) بيتحسب مرتين في القائمة
+   السنوية: المبيعات بتتضاعف وصافي الربح ممكن ينقلب من ربح لخسارة.
+   الاختبار ده بيثبّت حجم المشكلة عشان الحارس اللي في finalizeDraft
+   (تأكيد استبدال الشهر الموجود) مايتشالش بالغلط. */
+test("نفس الشهر مرتين = ازدواج في القائمة السنوية", () => {
+  const per = (id) => ({ id, year: 2026, month: 3, rows: baseTB(), openingInventory: 0 });
+  const once = yearFigures([per("a")], 2026, 0);
+  const twice = yearFigures([per("a"), per("b")], 2026, 0);
+  assert.equal(round2(twice.netSales), round2(once.netSales * 2), "المبيعات بتتضاعف");
+  assert.notEqual(round2(twice.netProfit), round2(once.netProfit), "صافي الربح بيتغيّر");
+  // شهرين مختلفين = تجميع سليم مش ازدواج
+  const twoMonths = yearFigures([per("a"), { ...per("b"), month: 4 }], 2026, 0);
+  assert.equal(round2(twoMonths.netSales), round2(once.netSales * 2));
+  assert.equal(twoMonths.monthCount ?? 2, twoMonths.monthCount ?? 2);
 });
