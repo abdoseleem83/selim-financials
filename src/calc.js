@@ -197,7 +197,6 @@ export function computeFigures(rows, openingInventory, forcedCogsMethod) {
   // للمركز المالي: نستخدم رصيد نهاية المدة (debit/credit) حسب طبيعة التصنيف
   const val = (r) => (DEBIT_NATURE.has(r.category) ? r.debit - r.credit : r.credit - r.debit);
   // لقائمة الدخل: نستخدم صافي حركة الشهر (netDebit - netCredit) لو متوفرة، وإلا رصيد النهاية
-  const hasMovement = rows.some((r) => (r.netDebit || 0) !== 0 || (r.netCredit || 0) !== 0);
   const mov = (r) => {
     if (r.netDebit === undefined && r.netCredit === undefined) return val(r);
     const nd = r.netDebit || 0, nc = r.netCredit || 0;
@@ -355,7 +354,6 @@ export function computeFigures(rows, openingInventory, forcedCogsMethod) {
     return true;
   }).map((r) => ({ code: r.code, name: r.name, amount: r.amount })).filter((r) => Math.abs(r.amount) > 0.004);
   const debtorsGroup = otherDebtorRows.slice();
-  const inventoryGroupOld = assetCurrentRows.filter((r) => inGroup(r, "inventory")).map((r) => ({ code: r.code, name: r.name, amount: r.amount })).filter((r) => Math.abs(r.amount) > 0.004);
 
   // ===== المركز المالي التفصيلي الجديد — حسب طلب المستخدم: خزائن / بنوك / مخازن / سلف / عملاء مستحق / دفعات مقدمة موردين / تأمين / أرصدة مدينة أخرى =====
   const bucketRows = (g) => srcRows.filter((r) => {
