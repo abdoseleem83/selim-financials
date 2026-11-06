@@ -744,8 +744,8 @@ export function computePartnersReport({ netProfit, equityRows, zakatPartners: zp
     const z = (zp || []).filter((p) => keysMatch(partnerKey(p.name), key));
     if (z.length === 1) { zakat = z[0].due || 0; zakatMatched = true; }
     else if (zakatTotal) zakat = round2(zakatTotal * pct);
-    return { name: r.name, capital: round2(r.amount), pct, profitShare, currentBal, manual, net, zakat: round2(zakat), zakatMatched, netAfterZakat: round2(net - zakat) };
+    return { name: r.name, capital: round2(r.amount), pct, profitShare, currentBal, manual, net, zakat: round2(zakat), zakatMatched };
   });
   const sum = (k) => round2(partners.reduce((s, p) => s + p[k], 0));
-  return { partners, unmatched, totals: { capital: sum("capital"), profitShare: sum("profitShare"), currentBal: sum("currentBal"), manual: sum("manual"), net: sum("net"), zakat: sum("zakat"), netAfterZakat: sum("netAfterZakat") } };
+  return { partners, unmatched, totals: { capital: sum("capital"), profitShare: sum("profitShare"), currentBal: sum("currentBal"), manual: sum("manual"), net: sum("net"), zakat: sum("zakat") } };
 }

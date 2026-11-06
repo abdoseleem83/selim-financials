@@ -12,8 +12,8 @@ test("ربط جاري الشريك برأس ماله وحساب الصافي", (
   });
   const [a, m] = r.partners;
   assert.equal(a.profitShare, 60000); assert.equal(a.currentBal, -20000); assert.equal(a.net, 40000);
-  assert.equal(a.zakat, 3000); assert.equal(a.netAfterZakat, 37000);
-  assert.equal(m.profitShare, 30000); assert.equal(m.net, 36000); assert.equal(m.netAfterZakat, 34500);
+  assert.equal(a.zakat, 3000);
+  assert.equal(m.profitShare, 30000); assert.equal(m.net, 36000);
   assert.equal(r.totals.net, 76000); assert.equal(r.unmatched.length, 0);
 });
 test("جاري غير منسوب بيتوزّع بالنسب ويتعلّم", () => {
