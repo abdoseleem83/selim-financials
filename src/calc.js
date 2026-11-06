@@ -571,3 +571,67 @@ export function yearFigures(sortedPeriods, year, yearOpeningInv, forcedCogsMetho
 }
 
 export function round2(n) { return Math.round(n * 100) / 100; }
+
+
+/* حركة الأصول الثابتة خلال سنة: رصيد أول + إضافات − استبعادات = رصيد آخر.
+ *
+ * كل شهر بيترفع ميزانه منفصل، فالإضافات = مجموع حركة المدين للشهور، والاستبعادات = مجموع
+ * حركة الدائن. رصيد الأول من «رصيد بداية» الميزان لو موجود، وإلا بيتحسب (آخر − حركة).
+ * لو الميزان مفيهوش أعمدة حركة، بنستنتج الحركة من فرق الأرصدة بين الشهور.
+ * مجمع الإهلاك بيتعرض موجب (رصيد دائن): «إهلاك الفترة» = حركة الدائن.
+ * أي فرق بين (أول + حركة) والآخر بيتعرض في عمود «فروقات» بدل ما يتخفي. */
+const ACC_DEP_RE = /مجمع\s*(ال)?(إهلاك|اهلاك|استهلاك|إستهلاك)|(إهلاك|اهلاك|استهلاك)\s*مجمع/;
+const DEP_EXP_RE = /إهلاك|اهلاك|استهلاك|إستهلاك/;
+export function isAccDepName(name) { return arMatch(ACC_DEP_RE, name || ""); }
+
+export function fixedAssetsMovement(periods) {
+  const ps = (periods || []).slice().sort((a, b) => a.year - b.year || a.month - b.month);
+  const accs = new Map();
+  let depExpense = 0;
+  ps.forEach((p) => {
+    const rows = p.rows || [];
+    const hasOpening = rows.some((r) => (r.opening || 0) !== 0);
+    const hasMov = rows.some((r) => (r.netDebit || 0) !== 0 || (r.netCredit || 0) !== 0);
+    rows.forEach((r) => {
+      if (r.category === "opex" && DEP_EXP_RE.test(r.name || "") && !isAccDepName(r.name)) depExpense += (r.netDebit || 0) - (r.netCredit || 0);
+    });
+    const seen = new Set();
+    rows.filter((r) => r.category === "asset_noncurrent").forEach((r) => {
+      const k = acctKey(r);
+      seen.add(k);
+      const close = (r.debit || 0) - (r.credit || 0);
+      let a = accs.get(k);
+      const nd = r.netDebit || 0, nc = r.netCredit || 0;
+      if (!a) {
+        const open = hasOpening ? (r.opening || 0) : (hasMov ? close - (nd - nc) : close);
+        a = { name: r.name, code: r.code, isAcc: isAccDepName(r.name), open, dr: 0, cr: 0, close, last: open };
+        accs.set(k, a);
+      }
+      if (hasMov) { a.dr += nd; a.cr += nc; }
+      else { const d = close - a.last; if (d > 0) a.dr += d; else a.cr -= d; }
+      a.close = close; a.last = close; a.lastSeen = p.id;
+    });
+    // حساب اختفى من ميزان لاحق = رصيده بقى صفر
+    accs.forEach((a, k) => { if (!seen.has(k)) { if (!hasMov && a.last) { if (a.last > 0) a.cr += a.last; else a.dr -= a.last; } a.close = 0; a.last = 0; } });
+  });
+  const lastId = ps.length ? ps[ps.length - 1].id : null;
+  const mk = (a) => {
+    const s = a.isAcc ? -1 : 1;
+    const open = round2(s * a.open), add = round2(a.isAcc ? a.cr : a.dr), ded = round2(a.isAcc ? a.dr : a.cr);
+    const close = round2(a.lastSeen === lastId ? s * a.close : 0);
+    return { code: a.code, name: a.name, open, add, ded, close, diff: round2(close - (open + add - ded)) };
+  };
+  const items = [...accs.values()].map((a) => ({ isAcc: a.isAcc, ...mk(a) })).filter((x) => x.open || x.add || x.ded || x.close);
+  const cost = items.filter((x) => !x.isAcc), acc = items.filter((x) => x.isAcc);
+  const all = items;
+  const sum = (arr, k) => round2(arr.reduce((s, r) => s + r[k], 0));
+  const tot = (arr) => ({ open: sum(arr, "open"), add: sum(arr, "add"), ded: sum(arr, "ded"), close: sum(arr, "close"), diff: sum(arr, "diff") });
+  const tc = tot(cost), ta = tot(acc);
+  return {
+    cost, acc, totalCost: tc, totalAcc: ta,
+    netBook: { open: round2(tc.open - ta.open), close: round2(tc.close - ta.close) },
+    depExpense: round2(depExpense),
+    hasDiff: [...cost, ...acc].some((r) => Math.abs(r.diff) > 1),
+    empty: !all.length,
+  };
+}
