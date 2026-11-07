@@ -28,3 +28,12 @@ test("ميزان بدون أعمدة حركة: الحركة من فرق الأر
   ]);
   assert.equal(m.cost[0].add, 30); assert.equal(m.cost[0].close, 130);
 });
+
+test("نسبة الإهلاك وتنبيه المجمع الأكبر من التكلفة", () => {
+  const m = fixedAssetsMovement([{ id: "1", year: 2026, month: 12, rows: [
+    r({ code: "1500", name: "سيارات", d: 100000, op: 100000 }),
+    r({ code: "1590", name: "مجمع إهلاك سيارات", c: 130000, op: -110000, nc: 20000 }),
+  ] }]);
+  assert.equal(m.cost[0].rate, 240); // شهر واحد فقط → تقدير سنوي مبالغ، والتنبيه تحت
+  assert.equal(m.warnings.length, 1);
+});

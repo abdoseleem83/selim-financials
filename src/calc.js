@@ -624,13 +624,25 @@ export function fixedAssetsMovement(periods) {
   const items = [...accs.values()].map((a) => ({ isAcc: a.isAcc, ...mk(a) })).filter((x) => x.open || x.add || x.ded || x.close);
   const cost = items.filter((x) => !x.isAcc), acc = items.filter((x) => x.isAcc);
   const all = items;
+  // ربط كل أصل بمجمع إهلاكه بالاسم → نسبة إهلاك سنوية تقريبية + تنبيه لو المجمع أكبر من التكلفة
+  const dkey = (n) => normAr(n || "").replace(/مجمع|اهلاك|استهلاك|الاهلاك|الاستهلاك/g, " ").replace(/\s+/g, " ").trim();
+  const months = new Set(ps.map((p) => p.month)).size || 1;
+  const warnings = [];
+  cost.forEach((c) => {
+    const k = dkey(c.name);
+    const m = k ? acc.filter((a) => { const ak = dkey(a.name); return ak && (ak === k || ak.includes(k) || k.includes(ak)); }) : [];
+    if (m.length === 1 && c.close > 0) {
+      c.rate = round2((m[0].add * (12 / months)) / c.close * 100);
+      if (m[0].close > c.close + 1) warnings.push(`مجمع الإهلاك «${m[0].name}» (${fmt(m[0].close)}) أكبر من تكلفة الأصل «${c.name}» (${fmt(c.close)}) — راجع الإهلاك أو الاستبعاد.`);
+    } else c.rate = null;
+  });
   const sum = (arr, k) => round2(arr.reduce((s, r) => s + r[k], 0));
   const tot = (arr) => ({ open: sum(arr, "open"), add: sum(arr, "add"), ded: sum(arr, "ded"), close: sum(arr, "close"), diff: sum(arr, "diff") });
   const tc = tot(cost), ta = tot(acc);
   return {
     cost, acc, totalCost: tc, totalAcc: ta,
     netBook: { open: round2(tc.open - ta.open), close: round2(tc.close - ta.close) },
-    depExpense: round2(depExpense),
+    depExpense: round2(depExpense), warnings,
     hasDiff: [...cost, ...acc].some((r) => Math.abs(r.diff) > 1),
     empty: !all.length,
   };

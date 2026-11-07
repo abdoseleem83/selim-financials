@@ -722,7 +722,8 @@ export function computePartnersReport({ netProfit, equityRows, zakatPartners: zp
   const capital = rows.filter((r) => r.amount > 0 && equityBucketOf(r) === "capital");
   const current = rows.filter((r) => equityBucketOf(r) === "partners");
   const totalCap = capital.reduce((s, r) => s + r.amount, 0);
-  if (!capital.length || !totalCap) return { partners: [], totals: null, unmatched: [] };
+  if (!capital.length || !totalCap) return { partners: [], totals: null, unmatched: [], retained: 0 };
+  const retained = round2(rows.filter((r) => equityBucketOf(r) === "retained").reduce((s, r) => s + r.amount, 0));
   const keyed = capital.map((r) => ({ r, key: partnerKey(r.name) }));
   const unmatched = [];
   const curBy = new Map(keyed.map((k) => [k.r, 0]));
@@ -747,5 +748,5 @@ export function computePartnersReport({ netProfit, equityRows, zakatPartners: zp
     return { name: r.name, capital: round2(r.amount), pct, profitShare, currentBal, manual, net, zakat: round2(zakat), zakatMatched };
   });
   const sum = (k) => round2(partners.reduce((s, p) => s + p[k], 0));
-  return { partners, unmatched, totals: { capital: sum("capital"), profitShare: sum("profitShare"), currentBal: sum("currentBal"), manual: sum("manual"), net: sum("net"), zakat: sum("zakat") } };
+  return { partners, unmatched, retained, totals: { capital: sum("capital"), profitShare: sum("profitShare"), currentBal: sum("currentBal"), manual: sum("manual"), net: sum("net"), zakat: sum("zakat") } };
 }
