@@ -22,3 +22,14 @@ test("من غير تقسيم: 25% لكل شريك", () => {
   const d = computeProfitDistribution({ netProfit: 400, equityRows: rows, splits: {} });
   assert.deepEqual(d.partners.map((p) => p.profitShare), [100, 100, 100, 100]);
 });
+
+test("زكاة السنة المالية للجزء المقسوم بنسبة رأس ماله", () => {
+  const d = computeProfitDistribution({
+    netProfit: 1000, equityRows: rows,
+    splits: { "شركاء- عبد الخالق عادل": [{ name: "عبد الخالق عادل", amount: 200000 }, { name: "د/ احمد حسان", amount: 300000 }] },
+    zakatPartners: [{ name: "شركاء- عبد الخالق عادل", due: 1000 }, { name: "شركاء- محمد شبل", due: 1000 }, { name: "شركاء- احمد شبل", due: 1000 }, { name: "شركاء- احمد عادل", due: 1000 }],
+  });
+  assert.equal(d.partners.find((p) => p.name === "عبد الخالق عادل").zakat, 400);
+  assert.equal(d.partners.find((p) => p.name === "د/ احمد حسان").zakat, 600);
+  assert.equal(d.totals.zakat, 4000);
+});

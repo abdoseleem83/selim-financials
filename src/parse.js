@@ -758,7 +758,7 @@ export function computePartnersReport({ netProfit, equityRows, zakatPartners: zp
  * splits = { "اسم حساب رأس المال": [{ name, amount }, ...] }
  * جاري الشريك الأصلي بيروح للاسم الأول في التقسيم (إلا لو اسم تاني في التقسيم بيطابقه).
  * فرق التقريب بيتحمّله آخر شريك عشان المجموع يطلع صافي الربح بالظبط. */
-export function computeProfitDistribution({ netProfit, equityRows, splits }) {
+export function computeProfitDistribution({ netProfit, equityRows, splits, zakatPartners: zp, zakatTotal }) {
   const rows = equityRows || [];
   const capital = rows.filter((r) => r.amount > 0 && equityBucketOf(r) === "capital");
   const current = rows.filter((r) => equityBucketOf(r) === "partners");
@@ -796,12 +796,17 @@ export function computeProfitDistribution({ netProfit, equityRows, splits }) {
     let share = i === entries.length - 1 ? round2(np - allocated) : round2(np * pct);
     allocated = round2(allocated + share);
     const currentBal = round2(cur.get(e) + loose * pct);
-    return { name: e.name, splitFrom: e.splitFrom || null, capital: e.capital, pct, profitShare: share, currentBal, net: round2(share + currentBal) };
+    // زكاة السنة المالية (للعلم فقط): من زكاة الشريك الأصلي بنفس اسم حساب رأس ماله؛ وللجزء المقسوم بنسبة جزئه من رأس المال
+    const zm = (zp || []).filter((q) => keysMatch(partnerKey(q.name), partnerKey(e.origin.name)));
+    let zakat = 0;
+    if (zm.length === 1) zakat = (zm[0].due || 0) * (e.capital / e.origin.amount);
+    else if (zakatTotal) zakat = zakatTotal * pct;
+    return { name: e.name, splitFrom: e.splitFrom || null, capital: e.capital, pct, profitShare: share, currentBal, net: round2(share + currentBal), zakat: round2(zakat) };
   });
   const sum = (k) => round2(partners.reduce((s, p) => s + p[k], 0));
   return {
     partners, warnings, unmatched, netProfit: np,
     splits: partners.filter((p) => p.splitFrom).map((p) => ({ from: p.splitFrom, name: p.name, capital: p.capital })),
-    totals: { capital: sum("capital"), profitShare: sum("profitShare"), currentBal: sum("currentBal"), net: sum("net") },
+    totals: { capital: sum("capital"), profitShare: sum("profitShare"), currentBal: sum("currentBal"), net: sum("net"), zakat: sum("zakat") },
   };
 }
