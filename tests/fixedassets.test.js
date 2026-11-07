@@ -37,3 +37,22 @@ test("نسبة الإهلاك وتنبيه المجمع الأكبر من الت
   assert.equal(m.cost[0].rate, 240); // شهر واحد فقط → تقدير سنوي مبالغ، والتنبيه تحت
   assert.equal(m.warnings.length, 1);
 });
+
+test("إهلاك مسجّل بالصافي مع الإضافات يترجع من مصروف الإهلاك", () => {
+  const p = { id: "1", year: 2026, month: 10, rows: [
+    r({ code: "1", name: "أصول- فلتر مياه", d: 2081.28, nd: 2081.28 }),
+    r({ code: "2", name: "أصول- كاميرات", d: 12895.4, op: 12425, nd: 2339.12, nc: 1868.72 }),
+    r({ code: "3", name: "أصول- ستاندات حديد", d: 100, nd: 100 }),
+    r({ code: "61", name: "مصروف اهلاك- فلتر مياه", category: "opex", d: 118.72, nd: 118.72 }),
+    r({ code: "62", name: "مصروف اهلاك- كاميرات", category: "opex", d: 1868.72, nd: 1868.72 }),
+    r({ code: "63", name: "مصروف إهلاك متنوع", category: "opex", d: 50, nd: 50 }),
+  ] };
+  const m = fixedAssetsMovement([p]);
+  const f = m.cost.find((x) => x.name.includes("فلتر"));
+  assert.equal(f.add, 2200); assert.equal(f.ded, 118.72); assert.equal(f.close, 2081.28);
+  const cam = m.cost.find((x) => x.name.includes("كاميرات"));
+  assert.equal(cam.ded, 1868.72); assert.equal(cam.add, 2339.12);
+  const syn = m.cost.find((x) => x.synthetic);
+  assert.equal(syn.ded, 50);
+  assert.equal(m.totalCost.close, 2081.28 + 12895.4 + 100);
+});

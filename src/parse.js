@@ -750,3 +750,58 @@ export function computePartnersReport({ netProfit, equityRows, zakatPartners: zp
   const sum = (k) => round2(partners.reduce((s, p) => s + p[k], 0));
   return { partners, unmatched, retained, totals: { capital: sum("capital"), profitShare: sum("profitShare"), currentBal: sum("currentBal"), manual: sum("manual"), net: sum("net"), zakat: sum("zakat") } };
 }
+
+
+/* قائمة توزيع الأرباح: توزيع ربح السنة على الشركاء بنسب رأس المال، مع إمكانية تقسيم رأس مال
+ * شريك واحد على أكتر من اسم (مثلاً 500 ألف → 201 ألف لعبد الخالق + 299 ألف لشريك تاني).
+ *
+ * splits = { "اسم حساب رأس المال": [{ name, amount }, ...] }
+ * جاري الشريك الأصلي بيروح للاسم الأول في التقسيم (إلا لو اسم تاني في التقسيم بيطابقه).
+ * فرق التقريب بيتحمّله آخر شريك عشان المجموع يطلع صافي الربح بالظبط. */
+export function computeProfitDistribution({ netProfit, equityRows, splits }) {
+  const rows = equityRows || [];
+  const capital = rows.filter((r) => r.amount > 0 && equityBucketOf(r) === "capital");
+  const current = rows.filter((r) => equityBucketOf(r) === "partners");
+  const sp = splits || {};
+  const warnings = [];
+  const entries = []; // { name, capital, origin(حساب رأس المال الأصلي), first }
+  capital.forEach((r) => {
+    const parts = (sp[r.name] || []).filter((p) => p && String(p.name || "").trim() && Number(p.amount) > 0);
+    if (!parts.length) { entries.push({ name: r.name, capital: round2(r.amount), origin: r, first: true }); return; }
+    const total = parts.reduce((s, p) => s + Number(p.amount), 0);
+    if (Math.abs(total - r.amount) > 0.5) warnings.push(`تقسيم «${r.name}»: مجموع الأجزاء ${round2(total)} مش بيساوي رأس المال ${round2(r.amount)}.`);
+    parts.forEach((p, i) => entries.push({ name: String(p.name).trim(), capital: round2(Number(p.amount)), origin: r, first: i === 0, splitFrom: r.name }));
+  });
+  const totalCap = entries.reduce((s, e) => s + e.capital, 0);
+  if (!entries.length || !totalCap) return { partners: [], totals: null, warnings, splits: [], netProfit: round2(netProfit || 0) };
+  // جاري الشريك
+  const cur = new Map(entries.map((e) => [e, 0]));
+  let loose = 0;
+  const unmatched = [];
+  current.forEach((c) => {
+    const ck = partnerKey(c.name);
+    const byPart = entries.filter((e) => e.splitFrom && keysMatch(partnerKey(e.name), ck));
+    const byOrigin = entries.filter((e) => keysMatch(partnerKey(e.origin.name), ck));
+    let tgt = null;
+    if (byPart.length === 1) tgt = byPart[0];
+    else if (byOrigin.length >= 1 && !byOrigin.some((e) => e.splitFrom)) tgt = byOrigin.length === 1 ? byOrigin[0] : null;
+    else if (byOrigin.length >= 1) tgt = byOrigin.find((e) => e.first) || null;
+    if (tgt) cur.set(tgt, cur.get(tgt) + c.amount);
+    else { loose += c.amount; unmatched.push(c.name); }
+  });
+  const np = round2(netProfit || 0);
+  let allocated = 0;
+  const partners = entries.map((e, i) => {
+    const pct = e.capital / totalCap;
+    let share = i === entries.length - 1 ? round2(np - allocated) : round2(np * pct);
+    allocated = round2(allocated + share);
+    const currentBal = round2(cur.get(e) + loose * pct);
+    return { name: e.name, splitFrom: e.splitFrom || null, capital: e.capital, pct, profitShare: share, currentBal, net: round2(share + currentBal) };
+  });
+  const sum = (k) => round2(partners.reduce((s, p) => s + p[k], 0));
+  return {
+    partners, warnings, unmatched, netProfit: np,
+    splits: partners.filter((p) => p.splitFrom).map((p) => ({ from: p.splitFrom, name: p.name, capital: p.capital })),
+    totals: { capital: sum("capital"), profitShare: sum("profitShare"), currentBal: sum("currentBal"), net: sum("net") },
+  };
+}

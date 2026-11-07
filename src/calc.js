@@ -587,13 +587,20 @@ export function isAccDepName(name) { return arMatch(ACC_DEP_RE, name || ""); }
 export function fixedAssetsMovement(periods) {
   const ps = (periods || []).slice().sort((a, b) => a.year - b.year || a.month - b.month);
   const accs = new Map();
+  const depExp = new Map();
   let depExpense = 0;
   ps.forEach((p) => {
     const rows = p.rows || [];
     const hasOpening = rows.some((r) => (r.opening || 0) !== 0);
     const hasMov = rows.some((r) => (r.netDebit || 0) !== 0 || (r.netCredit || 0) !== 0);
     rows.forEach((r) => {
-      if (r.category === "opex" && DEP_EXP_RE.test(r.name || "") && !isAccDepName(r.name)) depExpense += (r.netDebit || 0) - (r.netCredit || 0);
+      if (r.category === "opex" && DEP_EXP_RE.test(r.name || "") && !isAccDepName(r.name)) {
+        const v = (r.netDebit || 0) - (r.netCredit || 0);
+        depExpense += v;
+        const ek = acctKey(r);
+        const e = depExp.get(ek) || { name: r.name, amount: 0 };
+        e.amount += v; depExp.set(ek, e);
+      }
     });
     const seen = new Set();
     rows.filter((r) => r.category === "asset_noncurrent").forEach((r) => {
@@ -636,6 +643,25 @@ export function fixedAssetsMovement(periods) {
       if (m[0].close > c.close + 1) warnings.push(`مجمع الإهلاك «${m[0].name}» (${fmt(m[0].close)}) أكبر من تكلفة الأصل «${c.name}» (${fmt(c.close)}) — راجع الإهلاك أو الاستبعاد.`);
     } else c.rate = null;
   });
+  /* إهلاك متسجّل بالصافي مع الحركة: لو الميزان بيعرض حركة الحساب صافي (مدين − دائن) فالإهلاك الشهري
+     بيتخصم من «الإضافات» ومش بيظهر كدائن. بنسترجعه من مصروف الإهلاك: لو اسم مصروف الإهلاك بيطابق أصل
+     واحد بالظبط بنحوّله لعمود الإهلاك بتاعه، وأي باقي مش متوزّع بيظهر في سطر مستقل — والرصيد الأخير
+     ما بيتغيّرش (إضافات أكبر + إهلاك أكبر بنفس القيمة). */
+  const akey = (n) => normAr(n || "").replace(/مصروفات|مصروف|اهلاك|استهلاك|اصول|ثابتة|[-–—:()]/g, " ").replace(/(^|\s)ال/g, " ").replace(/\s+/g, " ").trim();
+  depExp.forEach((e) => {
+    if (e.amount <= 0.004) return;
+    const k = akey(e.name);
+    if (!k) return;
+    const exact = cost.filter((c) => akey(c.name) === k);
+    const part = exact.length ? exact : cost.filter((c) => { const ck = akey(c.name); return ck && (ck.includes(k) || k.includes(ck)); });
+    if (part.length !== 1) return;
+    const c = part[0];
+    const hidden = round2(e.amount - c.ded);
+    if (hidden > 0.004) { c.add = round2(c.add + hidden); c.ded = round2(c.ded + hidden); c.hiddenDep = hidden; }
+  });
+  const dedAfter = cost.reduce((a, c) => a + c.ded, 0);
+  const rest = round2(depExpense - dedAfter);
+  if (rest > 1 && cost.length) cost.push({ name: "إهلاك مسجّل بالصافي مع الإضافات (غير موزّع على أصل بعينه)", open: 0, add: rest, ded: rest, close: 0, diff: 0, synthetic: true, rate: null });
   const sum = (arr, k) => round2(arr.reduce((s, r) => s + r[k], 0));
   const tot = (arr) => ({ open: sum(arr, "open"), add: sum(arr, "add"), ded: sum(arr, "ded"), close: sum(arr, "close"), diff: sum(arr, "diff") });
   const tc = tot(cost), ta = tot(acc);
