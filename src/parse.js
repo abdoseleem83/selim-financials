@@ -550,6 +550,9 @@ export function computeZakatDetail(zakatData) {
   // لـ 2.577% وهي الطريقة المعتمدة محاسبيًا، مش تجميدها عند 2.5%
   const proration = days > 0 ? days / 354 : 1;
   const rate = zakatData.rate ?? 2.5;
+  // عيار الذهب اللي اتدخل سعره: النصاب = 85 جرام من نفس العيار. دار الإفتاء المصرية بتعتمد عيار 21،
+  // وهيئة AAOIFI والخليج على الذهب الخالص (24). السجلات القديمة (قبل الاختيار) كانت بعيار 24.
+  const karat = [18, 21, 24].includes(Number(zakatData.goldKarat)) ? Number(zakatData.goldKarat) : 24;
   const nisab = (zakatData.goldPrice ?? 0) > 0 ? round2(zakatData.goldPrice * 85) : 0;
 
   const raw = zakatPartners(f, zakatData.profitSplit);
@@ -580,7 +583,7 @@ export function computeZakatDetail(zakatData) {
     return { name: p.name, code: p.code, amount: p.amount, pct, share, meets, due };
   });
   const totalDue = round2(partners.reduce((s, p) => s + p.due, 0));
-  return { base, totalAssets, totalLiab, nisab, days, proration, rate, partners, totalDue,
+  return { base, totalAssets, totalLiab, nisab, karat, days, proration, rate, partners, totalDue,
            hawlWarning, perPartnerNisab, baseMeetsNisab };
 }
 
@@ -596,11 +599,14 @@ export function computeZakatTotal(zakatData) {
  *
  * واتجاه الإشارة واحد في القسم كله: بند الخصم بيبان موجب لو رصيده دائن.
  */
+/* حساب ضريبة/ضرائب/قيمة مضافة — بصيغ الكتابة كلها (ضريبة، ضرائب، ضرايب) */
+const isTaxAcct = (r) => arMatch(/ضريب|ضرائب|ضرايب|قيمه مضافه|قيمة مضافة/, r.name || "");
+
 export function buildZakatItems(f, rows, mkId) {
   const uidFn = mkId || uid;
   // القاعدة الحاكمة: مبلغ أي بند = مجموع تفاصيله بالظبط
   const sumSrc = (srcs) => round2((srcs || []).reduce((t, x) => t + (x.amount || 0), 0));
-  const taxLiab = round2(f.liabilityCurrentRows.filter((r) => /ضريبة/.test(r.name)).reduce((s, r) => s + r.amount, 0));
+  const taxLiab = round2(f.liabilityCurrentRows.filter((r) => isTaxAcct(r)).reduce((s, r) => s + r.amount, 0));
   // تفاصيل كل بند من الحسابات الفعلية في الميزان
   // مهم: لا نأخذ Math.abs هنا — لو حساب فرعي رصيده بعكس طبيعة مجموعته (مثلاً صندوق نقدية برصيد دائن)
   // لازم يفضل بالسالب عشان يُخصم صح من إجمالي البند، مش يتجمع عليه غلط
@@ -632,7 +638,7 @@ export function buildZakatItems(f, rows, mkId) {
       && arMatch(/مخزون|بضاعة|بضائع/, r.name)
       && !arMatch(/متاجرة|تحويل|أول المدة/, r.name))
     .map((r) => ({ name: r.name, code: r.code, amount: (r.debit || 0) - (r.credit || 0) })));
-  const taxSrc = srcOf(f.liabilityCurrentRows.filter((r) => /ضريبة/.test(r.name)));
+  const taxSrc = srcOf(f.liabilityCurrentRows.filter((r) => isTaxAcct(r)));
   // دائنون آخرون: باقي حسابات الخصوم المتداولة عدا الموردين (بند مستقل أعلاه) والضرائب (بند مستقل تحت) —
   // كانت تختفي بالكامل من وعاء الزكاة رغم ظهورها في المركز المالي (مثال: أرصدة فروع/جهات مرتبطة)
   // لازم نستبعد اللي ليهم بنود مستقلة فوق (موردين، دفعات مقدمة عملاء، ضرائب)،
@@ -642,7 +648,7 @@ export function buildZakatItems(f, rows, mkId) {
     (rows || []).filter((r) => r.subtype === "supplier_debt" || r.subtype === "customer_prepaid").map(acctKey)
   );
   const otherCredRows = f.liabilityCurrentRows.filter((r) =>
-    !ownItemCodes.has(acctKey(r)) && !/ضريبة/.test(r.name) && Math.abs(r.amount) > 0.004);
+    !ownItemCodes.has(acctKey(r)) && !isTaxAcct(r) && Math.abs(r.amount) > 0.004);
   const otherCredTotal = round2(otherCredRows.reduce((s, r) => s + r.amount, 0));
   // جاري الشركاء: دَين حقيقي على الشركة تجاه الشريك (مسحوبات/أرصدة لم تُرد بعد)، وليس رأس مال مستثمر في النشاط،
   // فيجب خصمه من وعاء الزكاة شرعًا مثل أي التزام آخر — كان مصنّفًا حقوق ملكية فاختفى من الوعاء تمامًا

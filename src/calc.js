@@ -293,6 +293,21 @@ export function computeFigures(rows, openingInventory, forcedCogsMethod) {
   const srcOf = (r) => byKey.get(keyOf(r));
   const ovOf = (r) => { const x = srcOf(r); return x && x.bsGroup ? x.bsGroup : null; };
   const isCashName = (n) => arMatch(/نقد|بنك|صندوق|صناديق|خزين|خزائن|خزنة|عهد|كاش|محفظ/, n);
+  /* مجموعة الحساب من أبيه في شجرة الحسابات (الكود) مش من اسمه هو: حساب اسمه «امانات الكاش» تحت
+   * «مدينين أخرى» لازم يفضل مدين — مش يروح للنقدية بسبب كلمة «كاش». بنمشي من أقرب أب لأبعد أب،
+   * وأول أب اسمه مجموعة معروفة (صندوق/بنوك/مدينين/مخزون) هو اللي بيحدد. لو مفيش، بنرجع للاسم. */
+  const CHAIN_GROUPS = [
+    ["debtors", /مدينين|مدينون|ارصدة مدينة|أرصدة مدينة/],
+    ["cash", /^\s*(ال)?(صندوق|صناديق|خزينة|خزائن|خزنة|نقدية|نقديه|بنوك|بنك)\s*$/],
+    ["inventory", /^\s*(ال)?(مخزون|مخازن|بضاعة|بضائع)(\s|$)/],
+  ];
+  const chainGroupOf = (r) => {
+    const full = srcOf(r) || r;                       // الصفوف المختصرة (code/name/amount) من غير chain — نرجع للصف الأصلي
+    for (const anc of (full.chain || [])) {
+      for (const [g, re] of CHAIN_GROUPS) if (arMatch(re, anc.name || "")) return g;
+    }
+    return null;
+  };
   // ترتيب القواعد مهم: تأمين قبل مخزن (عشان "تأمين مخزن..." ميدخلش غلط في المخازن)،
   // وبنوك/خزائن قبل مخازن، وبنبص على سلسلة الآباء كمان مش بس اسم الحساب نفسه —
   // عشان الحسابات التحليلية الفرعية (زي "سولار سيارة..." تحت "جاري الشركاء") تاخد نفس مكان أبوها
@@ -300,6 +315,10 @@ export function computeFigures(rows, openingInventory, forcedCogsMethod) {
     const ov = ovOf(r);
     if (ov) return ov;
     const t = chainText(r);
+    const cg = chainGroupOf(r);                       // الأب الأول (بالكود/الشجرة) قبل اسم الحساب نفسه
+    if (cg === "debtors") return arMatch(/تأمين/, t) ? "deposits" : (arMatch(/سلفة|سلف/, r.name) ? "advances" : "other_debtors");
+    if (cg === "inventory") return "inventory";
+    if (cg === "cash") return arMatch(/بنك/, t) ? "banks" : (arMatch(/عهد/, t) ? "custody" : "treasury");
     if (arMatch(/تأمين/, t)) return "deposits";
     if (arMatch(/بنك/, t)) return "banks";
     // العهد (عهدة موظف/سيارة نقدية) منفصلة عن الخزائن الفعلية — نفس طبيعة النقدية بس بند مختلف في العرض
@@ -315,6 +334,8 @@ export function computeFigures(rows, openingInventory, forcedCogsMethod) {
   const inGroup = (r, g) => {
     const ov = ovOf(r);
     if (ov) return ov === g;
+    const cg = chainGroupOf(r);
+    if (cg && (g === "cash" || g === "inventory")) return cg === g;   // تصنيف الأب بيغلب اسم الحساب
     if (g === "cash") return isCashName(r.name);
     if (g === "inventory") return arMatch(inv, r.name) && !arMatch(/متاجرة|تحويل|أول المدة/, r.name);
     return false;
@@ -349,6 +370,9 @@ export function computeFigures(rows, openingInventory, forcedCogsMethod) {
     const src = srcOf(r);
     if (src && (src.subtype === "customer_debt" || src.subtype === "supplier_prepaid")) return false;
     if (ov) return ov === "debtors";
+    const cg = chainGroupOf(r);
+    if (cg === "debtors") return true;               // تحت «مدينين» بالشجرة = مدين، مهما كان اسمه
+    if (cg === "cash" || cg === "inventory") return false;
     if (isCashName(r.name)) return false;
     if (inv.test(r.name)) return false;
     return true;
