@@ -483,7 +483,22 @@ export function seedClassMapFrom(parsed, savedMap, autoGuess) {
   return cm;
 }
 
-export function zakatPartners(f) {
+/* تقسيم شريك على أكتر من اسم (دخلوا باسم شخص واحد): بيستبدل الشريك بأجزائه، وكل جزء ياخد من
+ * مبلغ الشريك الأصلي بنسبة جزئه من مجموع التقسيم. باقي خصائص الشريك (الكود…) بتتنسخ. */
+export function splitPartners(list, splits) {
+  const sp = splits || {};
+  return (list || []).flatMap((p) => {
+    const parts = (sp[p.name] || []).filter((x) => x && String(x.name || "").trim() && Number(x.amount) > 0);
+    const tot = parts.reduce((s, x) => s + Number(x.amount), 0);
+    if (!parts.length || !tot) return [p];
+    return parts.map((x) => ({ ...p, name: String(x.name).trim(), amount: p.amount * (Number(x.amount) / tot), splitFrom: p.name }));
+  });
+}
+
+export function zakatPartners(f, splits) {
+  return splitPartners(zakatPartnersRaw(f), splits);
+}
+function zakatPartnersRaw(f) {
   // حصص الشركاء من حسابات رأس المال فقط.
   //
   // لازم نستخدم equityBucketOf مش مطابقة /جاري/ على الاسم: هي اللي بتراعي
@@ -537,7 +552,7 @@ export function computeZakatDetail(zakatData) {
   const rate = zakatData.rate ?? 2.5;
   const nisab = (zakatData.goldPrice ?? 0) > 0 ? round2(zakatData.goldPrice * 85) : 0;
 
-  const raw = zakatPartners(f);
+  const raw = zakatPartners(f, zakatData.profitSplit);
   const totalEquity = raw.reduce((s, p) => s + p.amount, 0);
 
   /* قياس النصاب: على الوعاء كله (حكم الخلطة) وهو الأصل، أو على حصة كل شريك.
@@ -717,40 +732,19 @@ export function partnerKey(name) {
 }
 const keysMatch = (a, b) => a && b && (a === b || a.includes(b) || b.includes(a));
 
-export function computePartnersReport({ netProfit, equityRows, zakatPartners: zp, zakatTotal, adjustments }) {
+export function computePartnersReport({ netProfit, equityRows, zakatPartners: zp, zakatTotal, adjustments, splits }) {
+  const d = computeProfitDistribution({ netProfit, equityRows, splits, zakatPartners: zp, zakatTotal });
   const rows = equityRows || [];
-  const capital = rows.filter((r) => r.amount > 0 && equityBucketOf(r) === "capital");
-  const current = rows.filter((r) => equityBucketOf(r) === "partners");
-  const totalCap = capital.reduce((s, r) => s + r.amount, 0);
-  if (!capital.length || !totalCap) return { partners: [], totals: null, unmatched: [], retained: 0 };
+  if (!d.totals) return { partners: [], totals: null, unmatched: [], retained: 0 };
   const retained = round2(rows.filter((r) => equityBucketOf(r) === "retained").reduce((s, r) => s + r.amount, 0));
-  const keyed = capital.map((r) => ({ r, key: partnerKey(r.name) }));
-  const unmatched = [];
-  const curBy = new Map(keyed.map((k) => [k.r, 0]));
-  let loose = 0;
-  current.forEach((c) => {
-    const ck = partnerKey(c.name);
-    const hits = keyed.filter((k) => keysMatch(k.key, ck));
-    if (hits.length === 1) curBy.set(hits[0].r, curBy.get(hits[0].r) + c.amount);
-    else { loose += c.amount; unmatched.push({ name: c.name, amount: round2(c.amount) }); }
-  });
   const adj = adjustments || {};
-  const partners = keyed.map(({ r, key }) => {
-    const pct = r.amount / totalCap;
-    const profitShare = round2((netProfit || 0) * pct);
-    const currentBal = round2(curBy.get(r) + loose * pct);
-    const manual = round2(Number(adj[r.name]) || 0);
-    const net = round2(profitShare + currentBal + manual);
-    let zakat = 0, zakatMatched = false;
-    const z = (zp || []).filter((p) => keysMatch(partnerKey(p.name), key));
-    if (z.length === 1) { zakat = z[0].due || 0; zakatMatched = true; }
-    else if (zakatTotal) zakat = round2(zakatTotal * pct);
-    return { name: r.name, capital: round2(r.amount), pct, profitShare, currentBal, manual, net, zakat: round2(zakat), zakatMatched };
+  const partners = d.partners.map((p) => {
+    const manual = round2(Number(adj[p.name]) || 0);
+    return { name: p.name, splitFrom: p.splitFrom, capital: p.capital, pct: p.pct, profitShare: p.profitShare, currentBal: p.currentBal, manual, net: round2(p.profitShare + p.currentBal + manual), zakat: p.zakat };
   });
   const sum = (k) => round2(partners.reduce((s, p) => s + p[k], 0));
-  return { partners, unmatched, retained, totals: { capital: sum("capital"), profitShare: sum("profitShare"), currentBal: sum("currentBal"), manual: sum("manual"), net: sum("net"), zakat: sum("zakat") } };
+  return { partners, retained, unmatched: (d.unmatched || []).map((n) => ({ name: n })), totals: { capital: sum("capital"), profitShare: sum("profitShare"), currentBal: sum("currentBal"), manual: sum("manual"), net: sum("net"), zakat: sum("zakat") } };
 }
-
 
 /* قائمة توزيع الأرباح: توزيع ربح السنة على الشركاء بنسب رأس المال، مع إمكانية تقسيم رأس مال
  * شريك واحد على أكتر من اسم (مثلاً 500 ألف → 201 ألف لعبد الخالق + 299 ألف لشريك تاني).
@@ -797,9 +791,12 @@ export function computeProfitDistribution({ netProfit, equityRows, splits, zakat
     allocated = round2(allocated + share);
     const currentBal = round2(cur.get(e) + loose * pct);
     // زكاة السنة المالية (للعلم فقط): من زكاة الشريك الأصلي بنفس اسم حساب رأس ماله؛ وللجزء المقسوم بنسبة جزئه من رأس المال
+    // لو ميزان الزكاة نفسه مقسّم بنفس التقسيم، زكاة الجزء موجودة باسمه؛ وإلا بنقسم زكاة الشريك الأصلي بنسبة الجزء
+    const zPart = e.splitFrom ? (zp || []).filter((q) => String(q.name).trim() === e.name) : [];
     const zm = (zp || []).filter((q) => keysMatch(partnerKey(q.name), partnerKey(e.origin.name)));
     let zakat = 0;
-    if (zm.length === 1) zakat = (zm[0].due || 0) * (e.capital / e.origin.amount);
+    if (zPart.length === 1) zakat = zPart[0].due || 0;
+    else if (zm.length === 1) zakat = (zm[0].due || 0) * (e.capital / e.origin.amount);
     else if (zakatTotal) zakat = zakatTotal * pct;
     return { name: e.name, splitFrom: e.splitFrom || null, capital: e.capital, pct, profitShare: share, currentBal, net: round2(share + currentBal), zakat: round2(zakat) };
   });

@@ -33,3 +33,14 @@ test("زكاة السنة المالية للجزء المقسوم بنسبة ر
   assert.equal(d.partners.find((p) => p.name === "د/ احمد حسان").zakat, 600);
   assert.equal(d.totals.zakat, 4000);
 });
+
+import { splitPartners, computePartnersReport } from "../src/parse.js";
+test("splitPartners بيقسّم المبلغ بنسبة الأجزاء ويحافظ على المجموع", () => {
+  const out = splitPartners([{ name: "أ", amount: 500 }, { name: "ب", amount: 500 }], { "أ": [{ name: "أ1", amount: 201 }, { name: "أ2", amount: 299 }] });
+  assert.equal(out.length, 3); assert.ok(Math.abs(out[0].amount + out[1].amount - 500) < 1e-9);
+});
+test("تقرير الشركاء بيطبّق التقسيم والجاري", () => {
+  const r = computePartnersReport({ netProfit: 2000, equityRows: rows, splits: { "شركاء- عبد الخالق عادل": [{ name: "عبد الخالق عادل", amount: 201000 }, { name: "د/ احمد حسان", amount: 299000 }] } });
+  assert.equal(r.partners.length, 5);
+  assert.equal(r.partners.find((p) => p.name === "د/ احمد حسان").pct.toFixed(4), "0.1495");
+});
