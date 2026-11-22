@@ -13,7 +13,7 @@
  * تخزين استجابات فايربيز في الكاش ممكن يورّي المستخدم بيانات قديمة.
  */
 
-const VERSION = "7.83";
+const VERSION = "7.84";
 const CACHE = "selim-shell-" + VERSION;
 
 const SHELL = [
@@ -51,7 +51,7 @@ self.addEventListener("install", (e) => {
 self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith("selim-shell-") && k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
