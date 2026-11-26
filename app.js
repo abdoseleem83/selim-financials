@@ -18521,4 +18521,146 @@ function AppLock({
         fontFamily: "inherit",
         textDecoration: "underline"
       }
-    }, "\u062A\u0633\u062C\u064A\u0644 \u062E\u0631\u0648\u062C \u0648\u0627\u0644\u062F\u062E\u0648\u0644 \u0628\u062D\u0633\u0627\
+    }, "\u062A\u0633\u062C\u064A\u0644 \u062E\u0631\u0648\u062C \u0648\u0627\u0644\u062F\u062E\u0648\u0644 \u0628\u062D\u0633\u0627\u0628 \u062A\u0627\u0646\u064A")));
+  }
+  return React.cloneElement(children, {
+    biometric: {
+      registered,
+      supported,
+      onRegister: async () => {
+        await registerBiometric(uid, user.email);
+        setRegistered(true);
+        sessionStorage.setItem(`selim_unlocked_${uid}`, "1");
+      },
+      onDisable: () => {
+        disableBiometric(uid);
+        setRegistered(false);
+      }
+    }
+  });
+}
+function Root() {
+  const [user, setUser] = useState(undefined);
+  useEffect(() => {
+    const unsub = auth.onAuthStateChanged(setUser);
+    return unsub;
+  }, []);
+  if (user === undefined) {
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        minHeight: "100vh",
+        background: CREAM,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontFamily: "'IBM Plex Sans Arabic', sans-serif",
+        color: "#5A6A80"
+      }
+    }, "\u062C\u0627\u0631\u0650 \u0627\u0644\u062A\u062D\u0645\u064A\u0644\u2026");
+  }
+  if (!user) return /*#__PURE__*/React.createElement(AuthScreen, null);
+  return /*#__PURE__*/React.createElement(VerifyEmailGate, {
+    user: user
+  }, /*#__PURE__*/React.createElement(AppLock, {
+    user: user
+  }, /*#__PURE__*/React.createElement(MainApp, {
+    user: user
+  })));
+}
+class ErrorBoundary extends React.Component {
+  constructor(p) {
+    super(p);
+    this.state = {
+      err: null
+    };
+  }
+  static getDerivedStateFromError(err) {
+    return {
+      err
+    };
+  }
+  componentDidCatch(err, info) {
+    console.error("خطأ في التطبيق:", err, info);
+  }
+  render() {
+    if (this.state.err) {
+      return /*#__PURE__*/React.createElement("div", {
+        dir: "rtl",
+        style: {
+          minHeight: "100vh",
+          background: CREAM,
+          fontFamily: "'IBM Plex Sans Arabic', sans-serif",
+          padding: 24,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center"
+        }
+      }, /*#__PURE__*/React.createElement("div", {
+        style: {
+          background: "#fff",
+          border: `1px solid ${RULE}`,
+          borderRadius: 12,
+          padding: 22,
+          maxWidth: 460,
+          width: "100%"
+        }
+      }, /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontFamily: "'Markazi Text', serif",
+          fontSize: 22,
+          fontWeight: 700,
+          color: RED_INK,
+          marginBottom: 8
+        }
+      }, "\u062D\u0635\u0644 \u062E\u0637\u0623 \u063A\u064A\u0631 \u0645\u062A\u0648\u0642\u0639"), /*#__PURE__*/React.createElement("p", {
+        style: {
+          fontSize: 13,
+          color: "#45566B",
+          lineHeight: 1.9,
+          marginBottom: 14
+        }
+      }, "\u0628\u064A\u0627\u0646\u0627\u062A\u0643 \u0645\u062D\u0641\u0648\u0638\u0629 \u0648\u0645\u0627 \u0636\u0627\u0639\u0634 \u0645\u0646\u0647\u0627 \u062D\u0627\u062C\u0629. \u062C\u0631\u0651\u0628 \u062A\u062D\u062F\u064A\u062B \u0627\u0644\u062A\u0637\u0628\u064A\u0642\u060C \u0648\u0644\u0648 \u0627\u0644\u062E\u0637\u0623 \u0627\u0633\u062A\u0645\u0631 \u0627\u0628\u0639\u062A \u0627\u0644\u0631\u0633\u0627\u0644\u0629 \u0627\u0644\u0644\u064A \u062A\u062D\u062A."), /*#__PURE__*/React.createElement("div", {
+        style: {
+          background: "#faeceb",
+          color: RED_INK,
+          borderRadius: 8,
+          padding: 10,
+          fontSize: 11,
+          direction: "ltr",
+          textAlign: "left",
+          maxHeight: 160,
+          overflowY: "auto",
+          marginBottom: 14
+        }
+      }, String(this.state.err && (this.state.err.stack || this.state.err.message || this.state.err))), /*#__PURE__*/React.createElement("div", {
+        style: {
+          display: "flex",
+          gap: 8,
+          flexWrap: "wrap"
+        }
+      }, /*#__PURE__*/React.createElement(PrimaryBtn, {
+        icon: RefreshCw,
+        onClick: forceUpdate,
+        style: {
+          flex: 1
+        }
+      }, "\u062A\u062D\u062F\u064A\u062B \u0627\u0644\u062A\u0637\u0628\u064A\u0642"), /*#__PURE__*/React.createElement(GhostBtn, {
+        onClick: () => {
+          window.location.reload();
+        }
+      }, "\u0625\u0639\u0627\u062F\u0629 \u062A\u062D\u0645\u064A\u0644")), /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontSize: 10.5,
+          color: "#64748B",
+          marginTop: 10,
+          textAlign: "center"
+        }
+      }, "\u0646\u0633\u062E\u0629 ", APP_VERSION)));
+    }
+    return this.props.children;
+  }
+}
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(/*#__PURE__*/React.createElement(ErrorBoundary, null, /*#__PURE__*/React.createElement(Root, null), /*#__PURE__*/React.createElement("div", {
+  className: "print-footer"
+}, /*#__PURE__*/React.createElement("span", null, PREPARER_LINE), /*#__PURE__*/React.createElement("span", null, `تاريخ التقرير: ${reportDateText()}`))));
